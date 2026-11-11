@@ -1,0 +1,28 @@
+name: Mirror apps from personal
+on:
+  schedule:
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: samsmasm/samsmasm.github.io
+          token: ${{ secrets.PERSONAL_PAT }}
+          path: src
+      - run: |
+          for d in argmap; do
+            rm -rf "$d"
+            cp -r "src/$d" "$d"
+          done
+          git config user.name "mirror-bot"
+          git config user.email "mirror-bot@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet || (git commit -m "Sync from personal" && git push)
