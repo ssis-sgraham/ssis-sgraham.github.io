@@ -1,0 +1,2875 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Argument Mapper</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌿</text></svg>">
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   DESIGN TOKENS — edit these to restyle the whole app
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  --font-node-text:   15px;
+  --font-source-text: 12.5px;
+  --font-badge:       10px;
+  --font-ui:          13px;
+  --font-hint:        11px;
+
+  --node-width:  234px;
+  --node-radius: 6px;
+  --canvas-bg:   #f5f3ef;
+
+  --c-contention: #5c6bc0;
+  --c-reason:     #43a047;
+  --c-objection:  #ef5350;
+  --c-rebuttal:   #fb8c00;
+  --c-evidence:   #1e88e5;
+
+  --badge-contention-bg: #ede7f6;  --badge-contention-fg: #4527a0;
+  --badge-reason-bg:     #e8f5e9;  --badge-reason-fg:     #2e7d32;
+  --badge-objection-bg:  #ffebee;  --badge-objection-fg:  #c62828;
+  --badge-rebuttal-bg:   #fff3e0;  --badge-rebuttal-fg:   #e65100;
+  --badge-evidence-bg:   #e3f2fd;  --badge-evidence-fg:   #1565c0;
+
+  --connector-stroke: #cdc9c1;
+  --connector-arrow:  #c9c4bb;
+}
+
+/* ── Reset ────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: var(--font-ui);
+  background: var(--canvas-bg);
+  height: 100vh; overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Header ───────────────────────────────────────────────────────────── */
+.app-header {
+  position: fixed; top: 0; left: 0; right: 0; height: 48px;
+  background: #fff; border-bottom: 1px solid #e4e0d8;
+  display: flex; align-items: center; padding: 0 20px 0 16px; gap: 10px; z-index: 300;
+}
+.app-logo { font-size: var(--font-ui); font-weight: 600; color: #3a3a3a; letter-spacing:.025em; white-space:nowrap; }
+.header-rule { width:1px; height:16px; background:#ddd; flex-shrink:0; }
+.map-name {
+  font-size: 15px; font-weight: 500; color: #2c2c2c;
+  flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: text; border-radius: 4px; padding: 2px 6px; margin: 0 -6px;
+  outline: none; transition: background .1s;
+}
+.map-name:hover { background: #f5f3ef; }
+.map-name:focus { background: #f5f3ef; box-shadow: 0 0 0 1.5px #c8c4bc; white-space: normal; overflow: visible; }
+.status-chip {
+  font-size:10px; font-family:'Courier New',monospace; font-weight:700;
+  letter-spacing:.1em; text-transform:uppercase; padding:3px 8px;
+  border-radius:3px; background:#f0ece4; color:#999; white-space:nowrap;
+  transition:background .4s, color .4s;
+}
+/* Unsaved escalation. A warm ramp that deepens with time, deliberately kept
+   clear of the node-type hues (green/orange/red are Reason/Rebuttal/Objection)
+   until the final step, which is a brick red distinct from objection #ef5350. */
+.status-chip.dirty-1 { background:#efe9de; color:#8a8378; }
+.status-chip.dirty-2 { background:#f3e7d2; color:#8a7040; }
+.status-chip.dirty-3 { background:#f0dcba; color:#8a5f20; }
+.status-chip.dirty-4 { background:#f2d5cd; color:#a83b26; }
+/* ── Side panel ───────────────────────────────────────────────────────── */
+.side-panel {
+  position:fixed; top:48px; left:0; bottom:0; width:180px;
+  background:#fff; border-right:1px solid #e4e0d8;
+  display:flex; flex-direction:column; z-index:200;
+}
+.sp-scroll { flex:1; min-height:0; overflow-y:auto; padding:4px 0 8px; }
+.sp-group { padding:10px 10px 4px; }
+.sp-group + .sp-group { border-top:1px solid #f0ece5; }
+.sp-label {
+  font-size:9px; font-family:'Courier New',monospace; font-weight:700;
+  letter-spacing:.14em; text-transform:uppercase; color:#c4bfb7;
+  margin-bottom:3px; padding:0 2px;
+}
+.sp-btn {
+  display:flex; align-items:center; width:100%; height:30px;
+  padding:0 10px; border:1px solid transparent; border-radius:5px;
+  background:transparent; font-family:'Courier New',monospace; font-size:10px;
+  font-weight:700; letter-spacing:.07em; text-transform:uppercase;
+  color:#555; cursor:pointer; text-align:left; margin-bottom:1px;
+  transition:background .1s, border-color .1s;
+}
+.sp-btn:hover  { background:#f5f3ef; border-color:#e8e4dc; }
+.sp-btn.is-open { background:#f5f3ef; border-color:#ccc; color:#333; }
+.sp-btn.primary { background:#3a3a3a; color:#fff; border-color:#3a3a3a; }
+.sp-btn.primary:hover { background:#111; border-color:#111; }
+.sp-bottom {
+  flex-shrink:0; border-top:1px solid #e4e0d8; padding:10px;
+  display:flex; flex-direction:column; gap:8px;
+}
+/* Google sign-in button */
+.sp-signin-btn {
+  display:flex; align-items:center; gap:8px; width:100%;
+  padding:7px 10px; background:#fff; border:1px solid #dadce0; border-radius:6px;
+  font-family:'Courier New',monospace; font-size:10px; font-weight:700;
+  letter-spacing:.05em; color:#3c4043; cursor:pointer;
+  transition:background .08s, box-shadow .08s;
+}
+.sp-signin-btn:hover { background:#f8f9fa; box-shadow:0 1px 4px rgba(0,0,0,.1); }
+/* Signed-in user row */
+.sp-user { display:flex; align-items:center; gap:8px; }
+.sp-user .user-avatar { width:28px; height:28px; border-radius:50%; border:1.5px solid #e4e0d8; flex-shrink:0; }
+.sp-user-info { flex:1; min-width:0; }
+.sp-user-name { font-size:11px; color:#3a3a3a; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.sp-user-out {
+  font-size:9px; font-family:'Courier New',monospace; font-weight:700;
+  letter-spacing:.06em; text-transform:uppercase; color:#bbb;
+  background:none; border:none; cursor:pointer; padding:0; display:block;
+}
+.sp-user-out:hover { color:#ef5350; }
+
+/* ── Add-node panel ───────────────────────────────────────────────────── */
+.float-panel {
+  position:fixed; top:56px; left:calc(90px + 50%); transform:translateX(-50%);
+  width:390px; background:#fff; border:1px solid #e0dbd3; border-radius:8px;
+  box-shadow:0 6px 24px rgba(0,0,0,.11); z-index:400;
+  padding:16px; display:none; flex-direction:column; gap:13px;
+}
+.float-panel.is-open { display:flex; }
+.float-panel.right { left:auto; right:16px; transform:none; width:260px; }
+.panel-row { display:flex; flex-direction:column; gap:6px; }
+.panel-label { font-size:10px; font-family:'Courier New',monospace; text-transform:uppercase; letter-spacing:.1em; color:#aaa; }
+.type-pills { display:flex; flex-wrap:wrap; gap:5px; }
+.type-pill {
+  font-size:10px; font-family:'Courier New',monospace; font-weight:700;
+  letter-spacing:.08em; text-transform:uppercase; padding:4px 9px;
+  border-radius:4px; border:1.5px solid transparent;
+  background:#f0ede8; color:#888; cursor:pointer;
+  transition:background .1s,border-color .1s,color .1s;
+}
+.type-pill[data-type="contention"].selected { background:var(--badge-contention-bg); color:var(--badge-contention-fg); border-color:var(--c-contention); }
+.type-pill[data-type="reason"].selected     { background:var(--badge-reason-bg);     color:var(--badge-reason-fg);     border-color:var(--c-reason); }
+.type-pill[data-type="objection"].selected  { background:var(--badge-objection-bg);  color:var(--badge-objection-fg);  border-color:var(--c-objection); }
+.type-pill[data-type="rebuttal"].selected   { background:var(--badge-rebuttal-bg);   color:var(--badge-rebuttal-fg);   border-color:var(--c-rebuttal); }
+.type-pill[data-type="evidence"].selected   { background:var(--badge-evidence-bg);   color:var(--badge-evidence-fg);   border-color:var(--c-evidence); }
+.parent-select {
+  width:100%; border:1px solid #ddd; border-radius:4px; padding:6px 8px;
+  font-family:Georgia,serif; font-size:12.5px; color:#444;
+  background:#fafaf8; outline:none; cursor:pointer;
+}
+.parent-select:focus { border-color:#aaa; }
+.panel-textarea {
+  width:100%; border:1px solid #ddd; border-radius:4px; padding:7px 9px;
+  font-family:Georgia,serif; font-size:var(--font-node-text); line-height:1.55;
+  color:#2d2d2d; background:#fafaf8; resize:none; outline:none; min-height:62px; overflow:hidden;
+}
+.panel-textarea:focus { border-color:#aaa; }
+.panel-textarea::placeholder { color:#ccc; }
+.source-panel-row { display:none; }
+.source-panel-row.visible { display:flex; flex-direction:column; gap:6px; }
+.panel-input {
+  width:100%; border:1px solid #ddd; border-radius:4px; padding:6px 8px;
+  font-family:'Courier New',monospace; font-size:var(--font-source-text);
+  color:#555; background:#fafaf8; outline:none;
+}
+.panel-input:focus { border-color:#aaa; }
+.panel-input::placeholder { color:#ccc; }
+.panel-footer { display:flex; justify-content:flex-end; gap:8px; padding-top:2px; }
+.btn-cancel {
+  height:32px; padding:0 14px; border:1px solid #ddd; border-radius:5px;
+  background:transparent; font-family:'Courier New',monospace; font-size:10.5px;
+  font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+  color:#999; cursor:pointer; transition:background .1s;
+}
+.btn-cancel:hover { background:#f5f3ef; }
+.btn-confirm {
+  height:32px; padding:0 16px; border:none; border-radius:5px; background:#3a3a3a;
+  font-family:'Courier New',monospace; font-size:10.5px; font-weight:700;
+  letter-spacing:.06em; text-transform:uppercase; color:#fff; cursor:pointer;
+  transition:background .1s;
+}
+.btn-confirm:hover { background:#111; }
+
+/* ── Load panel ───────────────────────────────────────────────────────── */
+#load-panel { top:56px; right:16px; left:auto; transform:none; width:280px; }
+.load-row { display:flex; gap:8px; align-items:center; }
+.code-input {
+  flex:1; border:1px solid #ddd; border-radius:4px; padding:6px 10px;
+  font-family:'Courier New',monospace; font-size:14px; font-weight:700;
+  letter-spacing:.15em; text-transform:uppercase; color:#333;
+  background:#fafaf8; outline:none;
+}
+.code-input:focus { border-color:#aaa; }
+
+/* ── Modals ───────────────────────────────────────────────────────────── */
+.modal-backdrop {
+  position:fixed; inset:0; background:rgba(0,0,0,.25); z-index:490; display:none;
+}
+.modal-backdrop.visible { display:block; }
+.modal {
+  position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+  background:#fff; border:1px solid #e0dbd3; border-radius:8px;
+  box-shadow:0 8px 32px rgba(0,0,0,.15); z-index:500;
+  padding:24px; width:580px; max-width:92vw;
+  display:none; flex-direction:column; gap:16px;
+}
+.modal.visible { display:flex; }
+.modal-title {
+  font-size:11px; font-family:'Courier New',monospace; font-weight:700;
+  letter-spacing:.12em; text-transform:uppercase; color:#888;
+}
+.modal-footer { display:flex; justify-content:flex-end; gap:8px; }
+
+/* Export modal */
+.export-pre {
+  background:#fafaf8; border:1px solid #e8e4dc; border-radius:4px;
+  padding:14px 16px; font-family:'Courier New',monospace; font-size:12px;
+  line-height:1.7; color:#444; white-space:pre; overflow:auto;
+  max-height:52vh; min-height:160px; flex:1;
+}
+
+/* Code modal */
+.code-display {
+  font-size:20px; font-family:'Courier New',monospace; font-weight:700;
+  letter-spacing:.2em; color:#3a3a3a;
+}
+.code-sub { font-size:12px; color:#999; font-style:italic; text-align:center; }
+
+/* Share modal */
+.share-row { display:flex; flex-direction:column; gap:6px; }
+.share-row-label { font-size:12px; color:#555; }
+.share-row-label b { color:#333; }
+.share-link-box { display:flex; gap:8px; }
+.share-link-input {
+  flex:1; border:1px solid #ddd; border-radius:4px; padding:6px 10px;
+  font-family:'Courier New',monospace; font-size:12px; color:#555;
+  background:#fafaf8; outline:none;
+}
+.share-row-code {
+  display:flex; align-items:center; justify-content:center; gap:10px;
+  padding-top:4px; border-top:1px solid #eee;
+}
+
+/* Share-mode banner modal */
+#share-mode-modal { width:420px; }
+.share-mode-sub { font-size:13px; color:#444; line-height:1.5; }
+
+/* ── Viewport & Canvas ────────────────────────────────────────────────── */
+.viewport {
+  position:fixed; top:48px; left:180px; right:0; bottom:0;
+  overflow:hidden; cursor:default;
+}
+.viewport.is-panning { cursor:grabbing !important; }
+.viewport.connection-mode { cursor:crosshair !important; }
+
+.canvas {
+  position:absolute; top:0; left:0;
+  transform-origin:0 0; will-change:transform;
+}
+.connector-svg {
+  position:absolute; top:0; left:0;
+  overflow:visible;
+  /* width/height set dynamically in drawConnectors() */
+}
+.snap-guide {
+  position:absolute; left:-2000px; width:8000px; height:0;
+  border-top:1.5px dashed rgba(90,130,190,.35);
+  pointer-events:none; opacity:0; transition:opacity .1s ease; z-index:4;
+}
+.snap-guide.visible { opacity:1; }
+
+/* ── Node cards ───────────────────────────────────────────────────────── */
+.node {
+  position:absolute; width:var(--node-width); background:#fff;
+  border:1px solid #e2dfd8; border-radius:var(--node-radius);
+  box-shadow:0 1px 3px rgba(0,0,0,.07), 0 0 1px rgba(0,0,0,.04);
+  cursor:move; transition:box-shadow .15s ease, outline .1s ease;
+  user-select:none;
+}
+.node.layout-animate { transition:box-shadow .15s ease, outline .1s ease, left .28s ease, top .28s ease; }
+.node:hover       { box-shadow:0 2px 10px rgba(0,0,0,.10), 0 0 1px rgba(0,0,0,.04); }
+.node.is-dragging { box-shadow:0 8px 24px rgba(0,0,0,.14); z-index:50; }
+
+/* Accent stripe */
+.node[data-type="contention"] { border-left:4px solid var(--c-contention); }
+.node[data-type="reason"]     { border-left:4px solid var(--c-reason); }
+.node[data-type="objection"]  { border-left:4px solid var(--c-objection); }
+.node[data-type="rebuttal"]   { border-left:4px solid var(--c-rebuttal); }
+.node[data-type="evidence"]   { border-left:4px solid var(--c-evidence); }
+
+/* Draft / island node */
+.node[data-type="draft"] {
+  border:1.5px dashed #c8c4bc !important;
+  background:#fdfcfa;
+}
+
+/* Detached non-draft island: keep coloured left stripe, dashed on other sides */
+.node[data-island] {
+  border-color: #c8c4bc; border-style: dashed; background: #fdfcfa;
+}
+.node[data-island][data-type="reason"]    { border-left: 4px solid var(--c-reason); }
+.node[data-island][data-type="objection"] { border-left: 4px solid var(--c-objection); }
+.node[data-island][data-type="rebuttal"]  { border-left: 4px solid var(--c-rebuttal); }
+.node[data-island][data-type="evidence"]  { border-left: 4px solid var(--c-evidence); }
+
+/* Connection mode highlighting */
+.node.connectable {
+  outline:2px solid rgba(90,140,220,.45);
+  outline-offset:3px;
+  cursor:pointer !important;
+}
+.node.connectable:hover { outline-color:rgba(90,140,220,.85); }
+
+.node-head {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:6px 7px 6px 9px; border-bottom:1px solid #f0ece5;
+}
+.type-badge {
+  font-size:var(--font-badge); font-family:'Courier New',Courier,monospace;
+  font-weight:700; letter-spacing:.1em; text-transform:uppercase;
+  padding:2px 7px; border-radius:3px; line-height:1.5;
+}
+.node[data-type="contention"] .type-badge { background:var(--badge-contention-bg); color:var(--badge-contention-fg); }
+.node[data-type="reason"]     .type-badge { background:var(--badge-reason-bg);     color:var(--badge-reason-fg); }
+.node[data-type="objection"]  .type-badge { background:var(--badge-objection-bg);  color:var(--badge-objection-fg); }
+.node[data-type="rebuttal"]   .type-badge { background:var(--badge-rebuttal-bg);   color:var(--badge-rebuttal-fg); }
+.node[data-type="evidence"]   .type-badge { background:var(--badge-evidence-bg);   color:var(--badge-evidence-fg); }
+.node[data-type="draft"]      .type-badge { background:#f0ede8; color:#b0aba3; }
+
+.node-btns { display:flex; align-items:center; gap:1px; }
+.btn-delete, .btn-collapse {
+  width:20px; height:20px; border:none; background:transparent; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  border-radius:4px; color:#ccc; font-size:12px; line-height:1; padding:0; flex-shrink:0;
+  transition:color .12s, background .12s;
+}
+.btn-delete { font-size:16px; }
+.btn-delete:hover { color:#ef5350; background:#fff2f2; }
+.btn-collapse:hover { color:#888; background:#f5f3ef; }
+.node[data-collapsed] { opacity:.85; }
+
+.node-body { padding:8px 10px 10px 9px; }
+.node-text {
+  width:100%; border:none; outline:none; resize:none; background:transparent;
+  font-family:Georgia,'Times New Roman',serif; font-size:var(--font-node-text);
+  line-height:1.6; color:#2d2d2d; cursor:text; overflow:hidden; min-height:42px; display:block;
+}
+.node-text::placeholder { color:#d0cbc3; }
+.source-row { margin-top:8px; padding-top:8px; border-top:1px solid #f0ece5; }
+.source-label { font-size:9px; font-family:'Courier New',monospace; text-transform:uppercase; letter-spacing:.12em; color:#bbb; margin-bottom:3px; }
+.source-input {
+  width:100%; border:none; outline:none; background:transparent;
+  font-family:'Courier New',Courier,monospace; font-size:var(--font-source-text);
+  color:#777; line-height:1.45; cursor:text;
+}
+.source-input::placeholder { color:#d0cbc3; }
+
+.node-resize {
+  position:absolute; right:0; top:0; bottom:0; width:7px;
+  cursor:col-resize; border-radius:0 var(--node-radius) var(--node-radius) 0;
+}
+.node-resize:hover, .node-resize:active { background:rgba(0,0,0,.06); }
+
+/* Draft node footer (connect button) */
+.island-footer {
+  margin-top:8px; padding-top:8px; border-top:1px solid #f0ece5;
+  display:flex; align-items:center; gap:8px;
+}
+.btn-connect {
+  font-family:'Courier New',monospace; font-size:10px; font-weight:700;
+  letter-spacing:.07em; text-transform:uppercase; padding:4px 10px;
+  border:1px solid #ddd; border-radius:4px; background:transparent;
+  color:#888; cursor:pointer; transition:all .1s;
+}
+.btn-connect:hover  { background:#f5f3ef; border-color:#bbb; color:#555; }
+.btn-connect.active { background:#e8f0fb; border-color:#7c9ef5; color:#3451c7; }
+
+/* ── Hover strip (fixed viewport-space overlay) ───────────────────────── */
+#hover-strip {
+  position:fixed; display:flex; gap:7px; z-index:250;
+  transform:translateX(-50%);
+  opacity:0; pointer-events:none; transition:opacity .12s ease;
+}
+#hover-strip.visible { opacity:1; pointer-events:auto; }
+
+.strip-btn {
+  position:relative; width:28px; height:28px; border-radius:50%;
+  border:none; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 2px 6px rgba(0,0,0,.18);
+  transition:transform .1s, box-shadow .1s;
+}
+.strip-btn:hover { transform:scale(1.18); box-shadow:0 3px 10px rgba(0,0,0,.25); }
+.strip-btn[data-type="contention"] { background:var(--c-contention); }
+.strip-btn[data-type="reason"]     { background:var(--c-reason); }
+.strip-btn[data-type="objection"]  { background:var(--c-objection); }
+.strip-btn[data-type="rebuttal"]   { background:var(--c-rebuttal); }
+.strip-btn[data-type="evidence"]   { background:var(--c-evidence); }
+/* CSS tooltip */
+.strip-btn::after {
+  content: attr(data-label);
+  position:absolute; bottom:calc(100% + 6px); left:50%; transform:translateX(-50%);
+  background:rgba(30,30,30,.85); color:#fff;
+  font-size:9.5px; font-family:'Courier New',monospace; letter-spacing:.07em;
+  padding:2px 7px; border-radius:3px; white-space:nowrap;
+  opacity:0; pointer-events:none; transition:opacity .1s;
+}
+.strip-btn:hover::after { opacity:1; }
+
+/* ── Connection mode type picker (fixed viewport-space) ───────────────── */
+#conn-picker {
+  position:fixed; display:flex; flex-direction:column; gap:4px;
+  background:#fff; border:1px solid #e0dbd3; border-radius:6px;
+  padding:8px 10px; box-shadow:0 4px 16px rgba(0,0,0,.13);
+  z-index:450; opacity:0; pointer-events:none; transition:opacity .1s;
+  min-width:120px;
+}
+#conn-picker.visible { opacity:1; pointer-events:auto; }
+#conn-picker-label {
+  font-size:9px; font-family:'Courier New',monospace; text-transform:uppercase;
+  letter-spacing:.1em; color:#aaa; margin-bottom:2px;
+}
+.conn-type-btn {
+  font-size:10px; font-family:'Courier New',monospace; font-weight:700;
+  letter-spacing:.07em; text-transform:uppercase; padding:5px 9px;
+  border-radius:4px; border:1.5px solid transparent; cursor:pointer;
+  text-align:left; transition:background .1s;
+}
+.conn-type-btn[data-type="contention"] { background:var(--badge-contention-bg); color:var(--badge-contention-fg); }
+.conn-type-btn[data-type="reason"]     { background:var(--badge-reason-bg);     color:var(--badge-reason-fg); }
+.conn-type-btn[data-type="objection"]  { background:var(--badge-objection-bg);  color:var(--badge-objection-fg); }
+.conn-type-btn[data-type="rebuttal"]   { background:var(--badge-rebuttal-bg);   color:var(--badge-rebuttal-fg); }
+.conn-type-btn[data-type="evidence"]   { background:var(--badge-evidence-bg);   color:var(--badge-evidence-fg); }
+
+/* ── Connection hint bar ──────────────────────────────────────────────── */
+#conn-hint {
+  position:fixed; top:58px; left:50%; transform:translateX(-50%);
+  background:rgba(44,66,140,.88); color:#fff;
+  font-family:'Courier New',monospace; font-size:11px; letter-spacing:.05em;
+  padding:6px 16px; border-radius:4px; z-index:450;
+  display:none; pointer-events:none;
+}
+#conn-hint.visible { display:block; }
+
+/* ── Zoom & hint ──────────────────────────────────────────────────────── */
+.zoom-panel {
+  position:fixed; bottom:22px; right:22px;
+  display:flex; flex-direction:column; align-items:center; gap:4px; z-index:300;
+}
+.zoom-btn {
+  width:30px; height:30px; border:1px solid #ddd; background:#fff;
+  border-radius:5px; cursor:pointer; font-size:18px; color:#666;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 1px 3px rgba(0,0,0,.07); transition:background .1s;
+}
+.zoom-btn:hover { background:#f5f3ef; }
+.zoom-readout { font-size:10px; font-family:'Courier New',monospace; color:#bbb; letter-spacing:.04em; }
+.hint { display:none; }
+
+/* ── User area (header) ───────────────────────────────────────────────── */
+.user-area {
+  display:flex; align-items:center; gap:7px;
+  cursor:pointer; padding:2px 6px; border-radius:5px;
+  transition:background .1s; flex-shrink:0;
+}
+.user-area:hover { background:#f5f3ef; }
+.user-avatar {
+  width:24px; height:24px; border-radius:50%;
+  border:1.5px solid #ddd; flex-shrink:0;
+}
+.user-display-name {
+  font-size:12px; color:#444; white-space:nowrap;
+  max-width:110px; overflow:hidden; text-overflow:ellipsis;
+}
+.user-signout {
+  font-size:10px; font-family:'Courier New',monospace; font-weight:700;
+  letter-spacing:.06em; text-transform:uppercase;
+  color:#aaa; cursor:pointer; border:none; background:none; padding:0;
+}
+.user-signout:hover { color:#ef5350; }
+
+/* ── My Maps panel ────────────────────────────────────────────────────── */
+#my-maps-panel {
+  position:fixed; top:48px; left:0; bottom:0; width:290px;
+  background:#fff; border-right:1px solid #e4e0d8;
+  display:flex; flex-direction:column; z-index:250;
+  transform:translateX(-100%); transition:transform .2s ease;
+  box-shadow:2px 0 12px rgba(0,0,0,.06);
+}
+#my-maps-panel.open { transform:translateX(0); }
+
+.mmp-head {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 16px 12px; border-bottom:1px solid #f0ece5; flex-shrink:0;
+}
+.mmp-title {
+  font-size:11px; font-family:'Courier New',monospace; font-weight:700;
+  letter-spacing:.1em; text-transform:uppercase; color:#888;
+}
+.mmp-close {
+  width:22px; height:22px; border:none; background:transparent; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  color:#bbb; font-size:18px; border-radius:4px;
+  transition:color .1s, background .1s;
+}
+.mmp-close:hover { color:#555; background:#f5f3ef; }
+
+.mmp-list { flex:1; overflow-y:auto; padding:8px 0; }
+
+.mmp-item {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:10px 16px; cursor:pointer; transition:background .1s;
+  border-bottom:1px solid #f8f6f2; gap:8px;
+}
+.mmp-item:hover { background:#faf8f5; }
+.mmp-item-info { flex:1; min-width:0; }
+.mmp-item-title {
+  font-size:13px; color:#2c2c2c; font-weight:500;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+}
+.mmp-item-meta {
+  font-size:10px; font-family:'Courier New',monospace;
+  color:#bbb; margin-top:2px; letter-spacing:.03em;
+}
+.mmp-item-del {
+  width:22px; height:22px; border:none; background:transparent; cursor:pointer;
+  color:#ddd; font-size:15px; border-radius:3px; flex-shrink:0;
+  display:flex; align-items:center; justify-content:center;
+  transition:color .1s, background .1s;
+}
+.mmp-item-del:hover { color:#ef5350; background:#fff2f2; }
+
+.mmp-item-share {
+  padding:3px 8px; border:1px solid #ddd; background:transparent; cursor:pointer;
+  color:#aaa; font-size:10px; border-radius:3px; flex-shrink:0;
+  font-family:'Courier New',monospace; letter-spacing:.03em;
+  transition:color .1s, background .1s, border-color .1s;
+}
+.mmp-item-share:hover { color:#5c6bc0; background:#ede7f6; border-color:#5c6bc0; }
+
+.mmp-empty {
+  padding:32px 20px; text-align:center;
+  font-size:12px; color:#bbb; font-style:italic; line-height:1.6;
+}
+
+/* ── Detach button (viewport-space, shown at connector midpoint) ──────── */
+#detach-btn {
+  position:fixed; z-index:260;
+  width:22px; height:22px; border-radius:50%;
+  background:#fff; border:1.5px solid #ddd;
+  color:#bbb; font-size:17px; line-height:1; cursor:pointer;
+  display:none; align-items:center; justify-content:center;
+  transform:translate(-50%,-50%);
+  box-shadow:0 1px 5px rgba(0,0,0,.14);
+  transition:color .1s, border-color .1s, background .1s;
+}
+#detach-btn:hover { color:#ef5350; border-color:#ef5350; background:#fff8f8; }
+#detach-btn.visible { display:flex; }
+
+/* ── Type picker (click badge to open) ────────────────────────────────── */
+#type-picker {
+  position:fixed; z-index:460;
+  background:#fff; border:1px solid #e0dbd3; border-radius:6px;
+  padding:6px 5px; box-shadow:0 4px 16px rgba(0,0,0,.12);
+  display:none; flex-direction:column; gap:2px; min-width:110px;
+}
+#type-picker.visible { display:flex; }
+#type-picker-label {
+  font-family:'Courier New',monospace; font-size:9px; font-weight:700;
+  letter-spacing:.1em; text-transform:uppercase; color:#bbb;
+  padding:2px 8px 5px; border-bottom:1px solid #f0ece5; margin-bottom:1px;
+}
+.type-picker-btn {
+  padding:5px 10px; border:none; background:transparent; cursor:pointer;
+  text-align:left; border-radius:3px; font-size:11px;
+  font-family:'Courier New',monospace; color:#555;
+  transition:background .1s;
+}
+.type-picker-btn:hover { background:#f5f3ef; }
+.type-badge[data-clickable] { cursor:pointer; }
+.type-badge[data-clickable]:hover { opacity:.75; }
+
+/* ── Check modal ──────────────────────────────────────────────────────── */
+.check-issues { display:flex; flex-direction:column; gap:5px; max-height:230px; overflow-y:auto; }
+.check-issue {
+  display:grid; grid-template-columns:76px 1fr; align-items:baseline; gap:8px;
+  padding:7px 12px; border-radius:4px; background:#fafaf8; border:1px solid #ede9e1;
+  font-size:12.5px; line-height:1.5;
+}
+.check-issue-badge {
+  font-family:'Courier New',monospace; font-size:9.5px; font-weight:700;
+  text-transform:uppercase; letter-spacing:.05em;
+  padding:2px 6px; border-radius:3px; text-align:center;
+}
+.check-issue-text { color:#555; }
+.check-ok {
+  text-align:center; color:#43a047; font-size:12px;
+  font-family:'Courier New',monospace; padding:10px 0; letter-spacing:.04em;
+}
+.check-summary {
+  background:#f5f3ef; border-radius:5px; padding:14px 16px;
+  font-size:13px; line-height:1.75; color:#3a3a3a;
+  border-left:3px solid var(--c-contention);
+}
+
+/* ── Toast ────────────────────────────────────────────────────────────── */
+#toast {
+  position:fixed; bottom:60px; left:50%; transform:translateX(-50%);
+  background:#333; color:#fff; font-family:'Courier New',monospace; font-size:11px;
+  padding:8px 18px; border-radius:5px; z-index:600;
+  opacity:0; transition:opacity .2s; pointer-events:none;
+}
+#toast.visible { opacity:1; }
+
+/* ── Minimap (inside side panel) ──────────────────────────────────────── */
+#minimap {
+  display:block; border:1px solid #ddd; border-radius:4px;
+  cursor:pointer; background:rgba(250,248,245,.94);
+}
+
+/* ── Import modal ─────────────────────────────────────────────────────── */
+.import-desc { font-size:12px; color:#999; line-height:1.55; margin:0; }
+.import-json-ta {
+  width:100%; border:1px solid #ddd; border-radius:4px; padding:10px 12px;
+  font-family:'Courier New',monospace; font-size:11.5px; line-height:1.6;
+  color:#333; background:#fafaf8; resize:vertical; outline:none; min-height:160px;
+}
+.import-json-ta:focus { border-color:#aaa; }
+.import-json-ta::placeholder { color:#ccc; }
+
+/* ── Help modal ───────────────────────────────────────────────────────── */
+.help-grid {
+  border:1px solid #ede9e1; border-radius:5px; overflow:hidden;
+  max-height:58vh; overflow-y:auto;
+}
+.help-row { display:grid; grid-template-columns:118px 1fr; }
+.help-row + .help-row { border-top:1px solid #f0ece5; }
+.help-key {
+  padding:9px 14px; font-family:'Courier New',monospace; font-size:10px;
+  font-weight:700; letter-spacing:.07em; text-transform:uppercase;
+  color:#999; background:#fafaf8; border-right:1px solid #ede9e1;
+  display:flex; align-items:center;
+}
+.help-val { padding:9px 14px; font-size:12.5px; line-height:1.6; color:#444; }
+.help-val kbd {
+  font-family:'Courier New',monospace; font-size:10px; background:#f0ece5;
+  border:1px solid #ddd; border-radius:3px; padding:1px 5px; white-space:nowrap;
+}
+
+/* ── Print ────────────────────────────────────────────────────────────── */
+@media print {
+  .app-header, .side-panel, .zoom-panel, .hint, #toast, #my-maps-panel,
+  #hover-strip, #detach-btn, #type-picker, #conn-hint, .snap-guide,
+  .modal-backdrop, .modal, #add-panel, #load-panel, #minimap, #import-modal, #help-modal,
+  .btn-delete, .btn-collapse, .btn-connect, .island-footer,
+  .source-label { display:none !important; }
+  body { height:auto; overflow:visible; background:#fff; }
+  .viewport { position:static !important; overflow:visible !important; top:0 !important; left:0 !important; }
+  .node { box-shadow:none !important; cursor:default !important; }
+  @page { margin:12mm; size:landscape; }
+}
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="app-logo">Argmap</div>
+  <div class="header-rule"></div>
+  <div class="map-name" id="map-name" contenteditable="true" spellcheck="false">New argument map</div>
+  <div class="status-chip" id="status-chip">Draft</div>
+</header>
+
+<nav class="side-panel" id="side-panel">
+  <div class="sp-scroll">
+
+    <div class="sp-group">
+      <div class="sp-label">Map</div>
+      <button class="sp-btn" id="btn-new">New</button>
+      <button class="sp-btn primary" id="btn-save">Save</button>
+      <button class="sp-btn" id="btn-load">Load</button>
+      <button class="sp-btn" id="btn-share">Share</button>
+      <button class="sp-btn" id="btn-my-maps" style="display:none">My Maps</button>
+      <button class="sp-btn" id="btn-export">Export</button>
+      <button class="sp-btn" id="btn-print">Print</button>
+    </div>
+
+    <div class="sp-group">
+      <div class="sp-label">Edit</div>
+      <button class="sp-btn" id="btn-undo">Undo</button>
+      <button class="sp-btn" id="btn-tidy">Tidy</button>
+    </div>
+
+    <div class="sp-group">
+      <div class="sp-label">Build</div>
+      <button class="sp-btn" id="btn-add-node">+ Node</button>
+      <button class="sp-btn" id="btn-add-island">+ Draft</button>
+    </div>
+
+    <div class="sp-group">
+      <div class="sp-label">Analyse</div>
+      <button class="sp-btn" id="btn-check">Check</button>
+    </div>
+
+    <div class="sp-group">
+      <button class="sp-btn" id="btn-help">? Help</button>
+    </div>
+
+  </div><!-- /.sp-scroll -->
+
+  <div class="sp-bottom">
+    <canvas id="minimap" width="160" height="110" title="Click to centre view"></canvas>
+
+    <!-- Signed-out -->
+    <button class="sp-signin-btn" id="btn-signin">
+      <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+        <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+        <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+        <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
+        <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+      </svg>
+      Sign in with Google
+    </button>
+
+    <!-- Signed-in -->
+    <div class="sp-user" id="user-area" style="display:none">
+      <img class="user-avatar" id="user-avatar" src="" alt="">
+      <div class="sp-user-info">
+        <div class="sp-user-name" id="user-display-name"></div>
+        <button class="sp-user-out" id="btn-signout">Sign out</button>
+      </div>
+    </div>
+  </div><!-- /.sp-bottom -->
+</nav>
+
+<!-- My Maps panel -->
+<div id="my-maps-panel">
+  <div class="mmp-head">
+    <span class="mmp-title">My Maps</span>
+    <button class="mmp-close" id="btn-mmp-close">×</button>
+  </div>
+  <div class="mmp-list" id="mmp-list">
+    <div class="mmp-empty">No saved maps yet.<br>Save a map to see it here.</div>
+  </div>
+</div>
+
+<!-- Add-node panel -->
+<div class="float-panel" id="add-panel">
+  <div class="panel-row">
+    <div class="panel-label">Type</div>
+    <div class="type-pills" id="type-pills">
+      <button class="type-pill selected" data-type="reason">Reason</button>
+      <button class="type-pill" data-type="objection">Objection</button>
+      <button class="type-pill" data-type="rebuttal">Rebuttal</button>
+      <button class="type-pill" data-type="evidence">Evidence</button>
+      <button class="type-pill" data-type="contention">Contention</button>
+    </div>
+  </div>
+  <div class="panel-row">
+    <div class="panel-label">Connects to</div>
+    <select class="parent-select" id="parent-select"></select>
+  </div>
+  <div class="panel-row">
+    <div class="panel-label">Argument</div>
+    <textarea class="panel-textarea" id="panel-text" placeholder="Write the argument for this node…" rows="3"></textarea>
+  </div>
+  <div class="source-panel-row panel-row" id="source-panel-row">
+    <div class="panel-label">Source / Citation</div>
+    <input class="panel-input" id="panel-source" type="text" placeholder="Author (Year) — description">
+  </div>
+  <div class="panel-footer">
+    <button class="btn-cancel" id="btn-add-cancel">Cancel</button>
+    <button class="btn-confirm" id="btn-add-confirm">Add to map</button>
+  </div>
+</div>
+
+<!-- Load panel -->
+<div class="float-panel" id="load-panel">
+  <div class="panel-row">
+    <div class="panel-label">Enter your 6-character code</div>
+    <div class="load-row">
+      <input class="code-input" id="code-input" type="text" maxlength="6" placeholder="ABC123">
+      <button class="btn-confirm" id="btn-load-confirm">Load</button>
+    </div>
+  </div>
+  <div class="panel-footer">
+    <button class="btn-cancel" id="btn-load-cancel">Cancel</button>
+  </div>
+</div>
+
+<!-- Export modal -->
+<div class="modal-backdrop" id="export-backdrop"></div>
+<div class="modal" id="export-modal">
+  <div class="modal-title">Export — Argument Outline</div>
+  <pre class="export-pre" id="export-pre"></pre>
+  <div class="modal-footer">
+    <button class="btn-cancel" id="btn-export-dl-md">Download .md</button>
+    <button class="btn-cancel" id="btn-export-dl-txt">Download .txt</button>
+    <button class="btn-confirm" id="btn-export-copy">Copy to clipboard</button>
+    <button class="btn-cancel" id="btn-export-close">Close</button>
+  </div>
+</div>
+
+<!-- Share modal (shown after save, or via My Maps → Share) -->
+<div class="modal-backdrop" id="code-backdrop"></div>
+<div class="modal" id="code-modal">
+  <div class="modal-title" id="code-modal-title">Share this map</div>
+  <div class="share-row">
+    <div class="share-row-label"><b>Edit link</b>: they edit this same map, and their changes save back to it</div>
+    <div class="share-link-box">
+      <input class="share-link-input" id="share-link-edit" type="text" readonly>
+      <button class="btn-confirm" id="btn-copy-edit-link">Copy</button>
+    </div>
+  </div>
+  <div class="share-row">
+    <div class="share-row-label"><b>Copy link</b>: they get their own copy, and nothing they do affects your map</div>
+    <div class="share-link-box">
+      <input class="share-link-input" id="share-link-copy" type="text" readonly>
+      <button class="btn-confirm" id="btn-copy-copy-link">Copy</button>
+    </div>
+  </div>
+  <div class="share-row-code">
+    <div class="code-sub" id="code-sub">Or enter code <span class="code-display" id="code-display">------</span> in the Load panel</div>
+    <button class="btn-cancel" id="btn-copy-code">Copy code</button>
+  </div>
+  <div class="modal-footer">
+    <button class="btn-cancel" id="btn-close-code">Close</button>
+  </div>
+</div>
+
+<!-- Unsaved-draft recovery (offered on load, never applied silently) -->
+<div class="modal-backdrop" id="restore-backdrop"></div>
+<div class="modal" id="restore-modal" style="width:440px">
+  <div class="modal-title">Unsaved changes found</div>
+  <div class="share-mode-sub" id="restore-sub"></div>
+  <div class="modal-footer">
+    <button class="btn-cancel" id="btn-restore-discard">Discard</button>
+    <button class="btn-confirm" id="btn-restore-ok">Restore</button>
+  </div>
+</div>
+
+<!-- Share-mode banner (shown when opening a shared link) -->
+<div class="modal-backdrop" id="share-mode-backdrop"></div>
+<div class="modal" id="share-mode-modal">
+  <div class="modal-title" id="share-mode-title">You're editing the original</div>
+  <div class="share-mode-sub" id="share-mode-sub"></div>
+  <div class="modal-footer">
+    <button class="btn-confirm" id="btn-share-mode-ok">Got it</button>
+  </div>
+</div>
+
+<!-- Check modal -->
+<div class="modal-backdrop" id="check-backdrop"></div>
+<div class="modal" id="check-modal">
+  <div class="modal-title">Argument Check</div>
+  <div class="check-issues" id="check-issues"></div>
+  <div class="check-summary" id="check-summary"></div>
+  <div class="modal-footer">
+    <button class="btn-cancel" id="btn-close-check">Close</button>
+  </div>
+</div>
+
+<!-- Import modal -->
+<div class="modal-backdrop" id="import-backdrop"></div>
+<div class="modal" id="import-modal">
+  <div class="modal-title">Import map from JSON</div>
+  <div id="import-pane-json" style="display:flex;flex-direction:column;gap:10px">
+    <p class="import-desc">Paste a JSON argument map below.</p>
+    <textarea class="import-json-ta" id="import-json-ta" placeholder='{"title":"...","nodes":[{"id":1,"type":"contention","text":"...","parentId":null}]}'></textarea>
+  </div>
+  <div class="modal-footer">
+    <button class="btn-confirm" id="btn-import-confirm">Import map</button>
+    <button class="btn-cancel" id="btn-import-close">Close</button>
+  </div>
+</div>
+
+<!-- Help modal -->
+<div class="modal-backdrop" id="help-backdrop"></div>
+<div class="modal" id="help-modal" style="width:640px">
+  <div class="modal-title" style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <span>How to use Argument Mapper</span>
+    <button class="btn-cancel" id="btn-load-sample" title="Load a filled-in example map">Sample</button>
+  </div>
+  <div class="help-grid">
+    <div class="help-row"><div class="help-key">Navigate</div><div class="help-val">Drag blank canvas to pan · scroll to zoom · <kbd>Ctrl Z</kbd> to undo</div></div>
+    <div class="help-row"><div class="help-key">Add nodes</div><div class="help-val">Hover any node → click the coloured buttons that appear below it · or use <kbd>+ Node</kbd> in the toolbar for full options</div></div>
+    <div class="help-row"><div class="help-key">Drafts</div><div class="help-val"><kbd>+ Draft</kbd> creates a floating node · click <kbd>Connect →</kbd> on it to attach to a parent, then pick its type</div></div>
+    <div class="help-row"><div class="help-key">Change type</div><div class="help-val">Click the type badge (Reason, Objection…) on any non-contention node to change its type</div></div>
+    <div class="help-row"><div class="help-key">Detach</div><div class="help-val">Hover a connector line · click the <kbd>−</kbd> button that appears to detach the child as an island</div></div>
+    <div class="help-row"><div class="help-key">Co-premises</div><div class="help-val">Drag two sibling nodes close together — they snap with a shared bar · click <kbd>AND</kbd> / <kbd>OR</kbd> to toggle the relationship · drag apart to separate</div></div>
+    <div class="help-row"><div class="help-key">Collapse</div><div class="help-val">Click <kbd>▾</kbd> on any node to hide its subtree · click <kbd>▸</kbd> to expand again</div></div>
+    <div class="help-row"><div class="help-key">Tidy</div><div class="help-val">Auto-arranges the full tree neatly · dissolves any co-premise groups</div></div>
+    <div class="help-row"><div class="help-key">Save</div><div class="help-val">Signed in: saves silently to My Maps · Guest: shows a 6-char code to bookmark or share</div></div>
+    <div class="help-row"><div class="help-key">Share</div><div class="help-val">Gives two links: an <b>edit link</b> (they change your map) and a <b>copy link</b> (they get their own copy, your map stays untouched) · saves first if the map is new</div></div>
+    <div class="help-row"><div class="help-key">Export</div><div class="help-val">Generates a structured plain-text outline — copy to clipboard or download as .md / .txt</div></div>
+    <div class="help-row"><div class="help-key">Check</div><div class="help-val">Flags nodes with no evidence and objections with no rebuttal · summarises the top-level reasons for the contention</div></div>
+    <div class="help-row"><div class="help-key">Print</div><div class="help-val">Fits the whole map to the page and opens the print / PDF dialog</div></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn-cancel" id="btn-import" style="margin-right:auto" title="Build a map from pasted JSON">Import JSON</button>
+    <button class="btn-cancel" id="btn-help-close">Close</button>
+  </div>
+</div>
+
+<!-- Detach button (viewport-space, shown at connector midpoint on hover) -->
+<button id="detach-btn" title="Detach node">−</button>
+
+<!-- Type picker (shown when clicking a node's type badge) -->
+<div id="type-picker">
+  <div id="type-picker-label">Change type</div>
+</div>
+
+<!-- Hover strip (viewport-space) -->
+<div id="hover-strip"></div>
+
+<!-- Connection mode type picker (viewport-space) -->
+<div id="conn-picker">
+  <div id="conn-picker-label">Classify as</div>
+</div>
+
+<!-- Connection mode hint -->
+<div id="conn-hint">Click a node to connect it · Esc to cancel</div>
+
+<!-- Canvas -->
+<div class="viewport" id="viewport">
+  <div class="canvas" id="canvas">
+    <svg class="connector-svg" id="svg-layer">
+      <defs>
+        <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#c9c4bb"/>
+        </marker>
+      </defs>
+    </svg>
+    <div class="snap-guide" id="snap-guide"></div>
+  </div>
+</div>
+
+<div class="zoom-panel">
+  <button class="zoom-btn" id="btn-zoom-in">+</button>
+  <div class="zoom-readout" id="zoom-readout">100%</div>
+  <button class="zoom-btn" id="btn-zoom-out">−</button>
+  <button class="zoom-btn" id="btn-zoom-fit" title="Fit all" style="font-size:11px">⊡</button>
+</div>
+
+<div id="toast"></div>
+
+<script type="module">
+import { initializeApp }        from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc, increment }
+                                from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged }
+                                from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+
+// ── Firebase (financehub project) ─────────────────────────────────────
+// Firestore rules needed: allow read, write on /argmap_maps/{code}
+const fbApp = initializeApp({
+  apiKey:            'AIzaSyDPDS0_msbuZxd6EAJvMkSs4rNLpvoMMjU',
+  authDomain:        'argmap-194a5.firebaseapp.com',
+  projectId:         'argmap-194a5',
+  storageBucket:     'argmap-194a5.firebasestorage.app',
+  messagingSenderId: '162506983187',
+  appId:             '1:162506983187:web:31b4151a044dd907f2bce6',
+});
+const db   = getFirestore(fbApp);
+const auth = getAuth(fbApp);
+const googleProvider = new GoogleAuthProvider();
+
+// ── Initial data ───────────────────────────────────────────────────────
+// What a fresh, empty map opens with: just a contention and one reason.
+const INITIAL_NODES = [
+  { id:'n0', type:'contention', parentId:null, text:'', source:'', x:386, y:50 },
+  { id:'n1', type:'reason', parentId:'n0', text:'', source:'', x:386, y:280 },
+];
+
+// A filled-in example, loaded on demand from Help → Sample.
+const SAMPLE_NODES = [
+  { id:'n0', type:'contention', parentId:null,
+    text:'Governments should intervene in markets to correct market failures.', source:'', x:386, y:50 },
+  { id:'n1', type:'reason', parentId:'n0',
+    text:'Markets underprovide public goods due to the free-rider problem.', source:'', x:100, y:280 },
+  { id:'n2', type:'reason', parentId:'n0',
+    text:'Negative externalities lead to overconsumption without intervention.', source:'', x:690, y:280 },
+  { id:'n3', type:'evidence', parentId:'n1',
+    text:'Demonstrates the inevitability of underprovision in competitive markets.',
+    source:'Samuelson (1954) — public goods theory', x:-20, y:510 },
+  { id:'n4', type:'objection', parentId:'n1',
+    text:'Private provision can emerge through voluntary mechanisms (Coase).', source:'', x:270, y:510 },
+  { id:'n5', type:'rebuttal', parentId:'n4',
+    text:'Transaction costs make voluntary provision inefficient at scale.', source:'', x:270, y:730 },
+  { id:'n6', type:'evidence', parentId:'n2',
+    text:'Provides the theoretical basis for corrective Pigouvian taxes.',
+    source:'Pigou (1920) — externality tax framework', x:690, y:510 },
+];
+
+const SNAP_LEVELS   = [50, 280, 510, 730, 950, 1170];
+const LEVEL_PAD     = 30; // px gap below tallest node at a level before the next level starts
+let dynamicLevels   = [...SNAP_LEVELS];
+const VALID_CHILDREN = {
+  contention: ['reason', 'objection'],
+  reason:     ['reason', 'objection', 'evidence'],
+  objection:  ['rebuttal', 'evidence'],
+  rebuttal:   ['evidence'],
+  evidence:   [],
+  draft:      [],
+};
+const TYPE_LABEL = {
+  contention:'Contention', reason:'Reason', objection:'Objection',
+  rebuttal:'Rebuttal', evidence:'Evidence', draft:'Draft',
+};
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+// ── State ──────────────────────────────────────────────────────────────
+let nodes       = INITIAL_NODES.map(n => ({...n}));
+let uidCounter  = 10;
+const elOf      = {};
+let tx=90, ty=36, sc=1;
+let drag        = null; // {nodeId, ox, oy}
+let widthDrag   = null; // {nodeId, startX, startW}
+let pan         = null; // {cx0, cy0, tx0, ty0}
+let connectionSrc = null; // nodeId of island being connected
+let pendingConnTarget = null; // nodeId of chosen parent during connection
+let currentHoverNode  = null;
+let currentCode       = null;
+let stripHideTimer    = null; // module-level so strip's mouseenter can cancel it
+let coGroups   = []; // co-premise groups: [{ id, nodeIds:[], operator:'AND'|'OR' }]
+let cgCounter  = 1;
+
+// ── DOM refs ───────────────────────────────────────────────────────────
+const viewport    = document.getElementById('viewport');
+const canvas      = document.getElementById('canvas');
+const svgLayer    = document.getElementById('svg-layer');
+const snapGuide   = document.getElementById('snap-guide');
+const zoomReadout = document.getElementById('zoom-readout');
+const hoverStrip  = document.getElementById('hover-strip');
+const connPicker  = document.getElementById('conn-picker');
+const connHint    = document.getElementById('conn-hint');
+const toastEl     = document.getElementById('toast');
+
+// ── Undo stack ────────────────────────────────────────────────────────
+const MAX_UNDO = 40;
+const undoStack = [];
+
+function pushUndo() {
+  undoStack.push({
+    nodes:    nodes.map(n => ({...n})),
+    coGroups: coGroups.map(cg => ({...cg, nodeIds:[...cg.nodeIds]})),
+  });
+  if (undoStack.length > MAX_UNDO) undoStack.shift();
+  // pushUndo runs BEFORE the mutation, but markDirty only schedules a debounced
+  // write that reads live state when it fires, so this still captures the result.
+  markDirty();
+}
+
+function rebuildAll() {
+  drag = null; pan = null;
+  exitConnectionMode();
+  hideStrip();
+  if (typeof hideDetachBtn === 'function') hideDetachBtn();
+  if (typeof hideTypePicker === 'function') hideTypePicker();
+  nodes.forEach(n => { elOf[n.id]?.remove(); delete elOf[n.id]; });
+  nodes.forEach(buildNode);
+  applyCollapsed();
+  requestAnimationFrame(() => requestAnimationFrame(() => { computeDynamicLevels(); drawConnectors(); }));
+}
+
+function undo() {
+  if (!undoStack.length) { showToast('Nothing to undo'); return; }
+  const state = undoStack.pop();
+  nodes = state.nodes;
+  coGroups = state.coGroups;
+  rebuildAll();
+}
+
+// ── Transform ─────────────────────────────────────────────────────────
+function applyTransform() {
+  canvas.style.transform = `translate(${tx}px,${ty}px) scale(${sc})`;
+  zoomReadout.textContent = Math.round(sc*100)+'%';
+  updateStripPosition();
+  updateMinimap();
+}
+
+function toCanvas(cx, cy) {
+  const r = viewport.getBoundingClientRect();
+  return { x:(cx-r.left-tx)/sc, y:(cy-r.top-ty)/sc };
+}
+
+function toViewport(cx, cy) {
+  const r = viewport.getBoundingClientRect();
+  return { x: cx*sc + tx + r.left, y: cy*sc + ty + r.top };
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────
+function nodeDepth(id) {
+  const n = nodes.find(n => n.id===id);
+  if (!n||!n.parentId) return 0;
+  return 1 + nodeDepth(n.parentId);
+}
+function snapY(id) { return dynamicLevels[Math.min(nodeDepth(id), dynamicLevels.length-1)]; }
+function computeDynamicLevels() {
+  const maxH = {};
+  nodes.filter(n => n.type !== 'draft').forEach(n => {
+    const d = nodeDepth(n.id);
+    const el = elOf[n.id];
+    maxH[d] = Math.max(maxH[d] || 0, el ? el.offsetHeight : 80);
+  });
+  const maxDepth = Object.keys(maxH).length ? Math.max(...Object.keys(maxH).map(Number)) : SNAP_LEVELS.length - 1;
+  const levels = [SNAP_LEVELS[0]];
+  for (let d = 0; d <= maxDepth; d++) {
+    levels.push(levels[d] + (maxH[d] || 80) + LEVEL_PAD);
+  }
+  while (levels.length < SNAP_LEVELS.length) {
+    levels.push(levels[levels.length - 1] + 230);
+  }
+  dynamicLevels = levels;
+}
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function autoResize(ta) { ta.style.height='auto'; ta.style.height=ta.scrollHeight+'px'; }
+function truncate(s,len=48) { return s.length>len ? s.slice(0,len)+'…' : s; }
+
+function showToast(msg, ms=2200) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('visible');
+  setTimeout(() => toastEl.classList.remove('visible'), ms);
+}
+
+// ── Local draft + unsaved-changes chip ────────────────────────────────
+// Every edit is mirrored to localStorage so a crash or closed tab cannot lose
+// work. Firestore is still only written on an explicit Save, so this costs no
+// database quota. The chip counts from the OLDEST unsaved change, not from the
+// last save, so reading a saved map without editing never escalates.
+const DRAFT_PREFIX   = 'argmap_draft:';
+const DRAFT_DEBOUNCE = 800;
+const DRAFT_MAX_AGE  = 14 * 24 * 60 * 60 * 1000; // drop abandoned drafts after 14 days
+
+let chipMode        = 'Draft';  // Draft | Saved | Loaded | Copy
+let dirtySince      = null;     // ms timestamp of the oldest unsaved change
+let savedSnapshot   = '';       // serialised state as of the last save/load
+let draftTimer      = null;
+
+const statusChip = document.getElementById('status-chip');
+
+function draftKey() { return DRAFT_PREFIX + (currentCode || 'new'); }
+
+function serialiseState() {
+  return JSON.stringify({
+    nodes, coGroups,
+    title: document.getElementById('map-name').textContent.trim(),
+  });
+}
+
+// Called from every mutation. Only a hint: flushDraft() settles the truth by
+// comparing against the last saved snapshot, so a click that changes nothing
+// (e.g. mousedown without a drag) resolves back to clean.
+function markDirty() {
+  if (dirtySince === null) dirtySince = Date.now();
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(flushDraft, DRAFT_DEBOUNCE);
+  updateChip();
+}
+
+function flushDraft() {
+  const state = serialiseState();
+  if (state === savedSnapshot) { clearDraft(); return; }
+  try {
+    localStorage.setItem(draftKey(), JSON.stringify({
+      state, ts: Date.now(), code: currentCode,
+      title: document.getElementById('map-name').textContent.trim(),
+    }));
+  } catch (err) {
+    console.warn('Draft save failed', err); // quota or private mode; chip still warns
+  }
+  updateChip();
+}
+
+// Marks the current state as the reference point: nothing is unsaved right now.
+function baselineState() {
+  clearTimeout(draftTimer);
+  savedSnapshot = serialiseState();
+  dirtySince = null;
+  clearDraft();
+  updateChip();
+}
+
+function clearDraft() {
+  dirtySince = null;
+  try { localStorage.removeItem(draftKey()); } catch {}
+  updateChip();
+}
+
+function setChipMode(mode) { chipMode = mode; updateChip(); }
+
+function updateChip() {
+  if (!statusChip) return;
+  statusChip.classList.remove('dirty-1','dirty-2','dirty-3','dirty-4');
+  if (dirtySince === null) {
+    statusChip.textContent = chipMode;
+    statusChip.title = '';
+    return;
+  }
+  const mins = Math.floor((Date.now() - dirtySince) / 60000);
+  const level = mins >= 10 ? 4 : mins >= 5 ? 3 : mins >= 2 ? 2 : 1;
+  statusChip.classList.add('dirty-' + level);
+  statusChip.textContent = mins < 1 ? 'Unsaved' : 'Unsaved · ' + mins + ' min';
+  statusChip.title = 'Kept in this browser, but not saved to your maps yet. Click Save.';
+}
+// Whole minutes only, so a 20s tick is enough and it never reads as a countdown.
+setInterval(updateChip, 20000);
+
+function readDraft(code) {
+  try {
+    const raw = localStorage.getItem(DRAFT_PREFIX + (code || 'new'));
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+function purgeOldDrafts() {
+  try {
+    const cutoff = Date.now() - DRAFT_MAX_AGE;
+    for (const k of Object.keys(localStorage)) {
+      if (!k.startsWith(DRAFT_PREFIX)) continue;
+      let ts = 0;
+      try { ts = JSON.parse(localStorage.getItem(k)).ts || 0; } catch {}
+      if (ts < cutoff) localStorage.removeItem(k);
+    }
+  } catch {}
+}
+
+// Rebuilds the canvas from a serialised draft payload.
+function applyState(stateJson) {
+  const data = JSON.parse(stateJson);
+  undoStack.length = 0;
+  nodes.forEach(n => { elOf[n.id]?.remove(); delete elOf[n.id]; });
+  nodes = (data.nodes || []).map(n => ({...n}));
+  coGroups = (data.coGroups || []).map(cg => ({...cg, nodeIds:[...cg.nodeIds]}));
+  cgCounter = coGroups.reduce((m,cg)=>Math.max(m,parseInt(cg.id.replace('cg',''))||0),0)+1;
+  uidCounter = nodes.reduce((m,n)=>Math.max(m,parseInt(n.id.replace(/\D/g,''))||0),0)+1;
+  if (data.title) document.getElementById('map-name').textContent = data.title;
+  nodes.forEach(buildNode);
+  requestAnimationFrame(()=>requestAnimationFrame(drawConnectors));
+}
+
+function viewportCenter() {
+  const r = viewport.getBoundingClientRect();
+  return { x:(r.width/2-tx)/sc - 117, y:(r.height/2-ty)/sc - 40 };
+}
+
+// ── New map ────────────────────────────────────────────────────────────
+function newMap() {
+  if (!confirm('Start a new map? Unsaved work will be lost.')) return;
+  // Clear canvas
+  undoStack.length = 0;
+  coGroups = []; cgCounter = 1;
+  nodes.forEach(n => { elOf[n.id]?.remove(); delete elOf[n.id]; });
+  nodes = [];
+  uidCounter = 1;
+  currentCode = null;
+  location.hash = '';
+  clearDraft();
+  localStorage.removeItem('argmap_code');
+  document.getElementById('map-name').textContent = 'New argument map';
+  chipMode = 'Draft';
+  // Add a single blank contention centered on screen
+  const {x, y} = viewportCenter();
+  const contention = { id:'n0', type:'contention', parentId:null, text:'', source:'', x, y:SNAP_LEVELS[0] };
+  nodes.push(contention);
+  const el = buildNode(contention);
+  drawConnectors();
+  baselineState();
+  el.querySelector('.node-text')?.focus();
+}
+
+document.getElementById('btn-new').addEventListener('click', newMap);
+
+// ── Load sample map ──────────────────────────────────────────────────
+function loadSample() {
+  if (!confirm('Load the sample argument map? Unsaved work will be lost.')) return;
+  undoStack.length = 0;
+  coGroups = []; cgCounter = 1;
+  nodes.forEach(n => { elOf[n.id]?.remove(); delete elOf[n.id]; });
+  nodes = SAMPLE_NODES.map(n => ({...n}));
+  uidCounter = nodes.reduce((m,n)=>Math.max(m,parseInt(n.id.replace(/\D/g,''))||0),0)+1;
+  currentCode = null;
+  location.hash = '';
+  clearDraft();
+  localStorage.removeItem('argmap_code');
+  document.getElementById('map-name').textContent = 'Sample argument map';
+  chipMode = 'Draft';
+  nodes.forEach(buildNode);
+  requestAnimationFrame(()=>requestAnimationFrame(drawConnectors));
+  // Demo content, not the student's work, so it starts clean and only nags once edited.
+  baselineState();
+  document.getElementById('help-modal').classList.remove('visible');
+  document.getElementById('help-backdrop').classList.remove('visible');
+}
+document.getElementById('btn-load-sample').addEventListener('click', loadSample);
+
+// Map title editing
+const mapNameEl = document.getElementById('map-name');
+mapNameEl.addEventListener('input', markDirty);
+mapNameEl.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); mapNameEl.blur(); }
+});
+// Prevent pasting formatted content
+mapNameEl.addEventListener('paste', e => {
+  e.preventDefault();
+  const text = e.clipboardData.getData('text/plain');
+  document.execCommand('insertText', false, text);
+});
+
+// ── Connectors ─────────────────────────────────────────────────────────
+function drawConnectors() {
+  while (svgLayer.childNodes.length > 1) svgLayer.removeChild(svgLayer.lastChild);
+
+  // Size the SVG to cover all node positions so Chrome doesn't clip content
+  let maxX = 800, maxY = 600;
+  nodes.forEach(n => {
+    const el = elOf[n.id]; if (!el) return;
+    maxX = Math.max(maxX, n.x + (el.offsetWidth  || 234) + 60);
+    maxY = Math.max(maxY, n.y + (el.offsetHeight || 80)  + 60);
+  });
+  svgLayer.setAttribute('width',  maxX);
+  svgLayer.setAttribute('height', maxY);
+  for (const node of nodes) {
+    if (!node.parentId) continue;
+    if (isHiddenByCollapse(node.id)) continue;
+    if (node.coGroupId) continue; // handled by drawCoGroupConnector
+    const parent = nodes.find(n => n.id===node.parentId);
+    if (!parent) continue;
+    const cEl=elOf[node.id], pEl=elOf[parent.id];
+    if (!cEl||!pEl) continue;
+    const cw=cEl.offsetWidth||234, ph=pEl.offsetHeight||80, pw=pEl.offsetWidth||234;
+    const x1=node.x+cw/2, y1=node.y;
+    const x2=parent.x+pw/2, y2=parent.y+ph;
+    const stretch=Math.max(40,Math.abs(y1-y2)*.42);
+    const d=`M${x1},${y1} C${x1},${y1-stretch} ${x2},${y2+stretch} ${x2},${y2}`;
+
+    // Visible connector path
+    const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('d',d); path.setAttribute('fill','none');
+    path.setAttribute('stroke-width','1.5');
+    path.setAttribute('marker-end','url(#arrow)');
+    path.setAttribute('stroke','#cdc9c1');
+    path.style.pointerEvents = 'none';
+    svgLayer.appendChild(path);
+
+    // Wide transparent hit path for detach hover (bezier midpoint = (x1+x2)/2, (y1+y2)/2 for symmetric ctrl pts)
+    const mx = (x1+x2)/2, my = (y1+y2)/2;
+    const hitPath = document.createElementNS('http://www.w3.org/2000/svg','path');
+    hitPath.setAttribute('d',d); hitPath.setAttribute('fill','none');
+    hitPath.setAttribute('stroke','transparent'); hitPath.setAttribute('stroke-width','16');
+    hitPath.style.pointerEvents = 'stroke';
+    hitPath.addEventListener('mouseenter', () => showDetachBtn(node.id, mx, my));
+    hitPath.addEventListener('mouseleave', scheduleHideDetachBtn);
+    svgLayer.appendChild(hitPath);
+  }
+  coGroups.forEach(cg => drawCoGroupConnector(cg));
+  updateMinimap();
+}
+
+// ── Co-premise group connector ─────────────────────────────────────────
+function drawCoGroupConnector(cg) {
+  const groupNodes = cg.nodeIds.map(id => nodes.find(n => n.id === id)).filter(Boolean);
+  if (groupNodes.length < 2) return;
+  if (groupNodes.some(n => !elOf[n.id] || isHiddenByCollapse(n.id))) return;
+  const parent = nodes.find(n => n.id === groupNodes[0].parentId);
+  if (!parent) return;
+  const pEl = elOf[parent.id]; if (!pEl) return;
+
+  const nCX = n => n.x + (elOf[n.id]?.offsetWidth || n.width || 234) / 2;
+  groupNodes.sort((a, b) => a.x - b.x);
+  const barY    = Math.min(...groupNodes.map(n => n.y)) - 16;
+  const barCX1  = nCX(groupNodes[0]);
+  const barCX2  = nCX(groupNodes[groupNodes.length-1]);
+  const barMidX = (barCX1 + barCX2) / 2;
+
+  // Horizontal bar connecting node centres
+  const bar = document.createElementNS('http://www.w3.org/2000/svg','line');
+  bar.setAttribute('x1',barCX1); bar.setAttribute('y1',barY);
+  bar.setAttribute('x2',barCX2); bar.setAttribute('y2',barY);
+  bar.setAttribute('stroke-width','1.5'); bar.setAttribute('stroke','#cdc9c1');
+  bar.style.pointerEvents='none';
+  svgLayer.appendChild(bar);
+
+  // Tick from bar down to each node's top
+  groupNodes.forEach(n => {
+    const tick = document.createElementNS('http://www.w3.org/2000/svg','line');
+    tick.setAttribute('x1',nCX(n)); tick.setAttribute('y1',barY);
+    tick.setAttribute('x2',nCX(n)); tick.setAttribute('y2',n.y);
+    tick.setAttribute('stroke-width','1.5'); tick.setAttribute('stroke','#cdc9c1');
+    tick.style.pointerEvents='none';
+    svgLayer.appendChild(tick);
+  });
+
+  // Single bezier from bar midpoint up to parent bottom
+  const pw=pEl.offsetWidth||234, ph=pEl.offsetHeight||80;
+  const x2=parent.x+pw/2, y2=parent.y+ph;
+  const stretch=Math.max(40,Math.abs(barY-y2)*0.42);
+  const d=`M${barMidX},${barY} C${barMidX},${barY-stretch} ${x2},${y2+stretch} ${x2},${y2}`;
+  const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+  path.setAttribute('d',d); path.setAttribute('fill','none');
+  path.setAttribute('stroke-width','1.5');
+  path.setAttribute('marker-end','url(#arrow)');
+  path.setAttribute('stroke','#cdc9c1');
+  path.style.pointerEvents='none';
+  svgLayer.appendChild(path);
+
+  // AND/OR label (clickable to toggle)
+  const labelBg=document.createElementNS('http://www.w3.org/2000/svg','rect');
+  labelBg.setAttribute('x',barMidX-14); labelBg.setAttribute('y',barY-16);
+  labelBg.setAttribute('width',28); labelBg.setAttribute('height',13);
+  labelBg.setAttribute('rx',3);
+  labelBg.setAttribute('fill','var(--canvas-bg)'); labelBg.setAttribute('stroke','#d0ccc4');
+  labelBg.setAttribute('stroke-width','1');
+  labelBg.style.cursor='pointer';
+  svgLayer.appendChild(labelBg);
+
+  const label=document.createElementNS('http://www.w3.org/2000/svg','text');
+  label.setAttribute('x',barMidX); label.setAttribute('y',barY-6);
+  label.setAttribute('text-anchor','middle');
+  label.setAttribute('font-size','9'); label.setAttribute('font-family','Courier New,monospace');
+  label.setAttribute('font-weight','700'); label.setAttribute('letter-spacing','0.5');
+  label.setAttribute('fill','#888');
+  label.textContent=cg.operator;
+  label.style.cursor='pointer'; label.style.userSelect='none';
+  svgLayer.appendChild(label);
+
+  const toggleOp = () => { pushUndo(); cg.operator = cg.operator==='AND'?'OR':'AND'; drawConnectors(); };
+  labelBg.addEventListener('click', toggleOp);
+  label.addEventListener('click', toggleOp);
+}
+
+// ── Build node card ────────────────────────────────────────────────────
+function buildNode(node) {
+  const el = document.createElement('div');
+  el.className  = 'node';
+  el.dataset.type = node.type;
+  el.dataset.id   = node.id;
+  el.style.left   = node.x+'px';
+  el.style.top    = node.y+'px';
+
+  const isEv       = node.type === 'evidence';
+  const isDraft    = node.type === 'draft';
+  const isIsland   = node.parentId === null && node.type !== 'contention';
+  const canCollapse = !['evidence','draft'].includes(node.type);
+  node.collapsed   = node.collapsed || false;
+  if (node.collapsed) el.dataset.collapsed = 'true';
+  if (isIsland && !isDraft) el.dataset.island = 'true';
+
+  el.innerHTML = `
+    <div class="node-resize" title="Drag to resize"></div>
+    <div class="node-head">
+      <span class="type-badge"${node.type !== 'contention' ? ' data-clickable="true"' : ''}>${TYPE_LABEL[node.type]}</span>
+      <div class="node-btns">
+        ${canCollapse ? `<button class="btn-collapse" title="Collapse/expand">${node.collapsed ? '▸' : '▾'}</button>` : ''}
+        <button class="btn-delete" title="Delete">×</button>
+      </div>
+    </div>
+    <div class="node-body">
+      <textarea class="node-text" placeholder="${isDraft?'Draft idea…':'Write your argument…'}" rows="2">${escHtml(node.text)}</textarea>
+      ${isEv ? `<div class="source-row">
+        <div class="source-label">Source</div>
+        <input class="source-input" type="text" placeholder="Author (Year) — description" value="${escHtml(node.source||'')}">
+      </div>` : ''}
+      ${isIsland ? `<div class="island-footer">
+        <button class="btn-connect" data-id="${node.id}">Connect →</button>
+      </div>` : ''}
+    </div>`;
+
+  const ta = el.querySelector('.node-text');
+  ta.addEventListener('input', () => { node.text=ta.value; autoResize(ta); computeDynamicLevels(); drawConnectors(); markDirty(); });
+
+  const resizeHandle = el.querySelector('.node-resize');
+  resizeHandle.addEventListener('mousedown', e => {
+    e.stopPropagation(); e.preventDefault();
+    pushUndo();
+    widthDrag = { nodeId: node.id, startX: e.clientX, startW: node.width || 234 };
+  });
+
+  if (isEv) {
+    const si = el.querySelector('.source-input');
+    si.addEventListener('input', () => { node.source=si.value; markDirty(); });
+  }
+
+  if (isIsland) {
+    const btnC = el.querySelector('.btn-connect');
+    btnC.addEventListener('mousedown', e => e.stopPropagation());
+    btnC.addEventListener('click', e => { e.stopPropagation(); toggleConnectionMode(node.id); });
+  }
+
+  // Badge click → type picker (not for contention)
+  if (node.type !== 'contention') {
+    const badge = el.querySelector('.type-badge');
+    badge.addEventListener('mousedown', e => e.stopPropagation());
+    badge.addEventListener('click', e => { e.stopPropagation(); showTypePicker(node.id, e.clientX, e.clientY); });
+  }
+
+  // Collapse toggle
+  if (canCollapse) {
+    const btnCol = el.querySelector('.btn-collapse');
+    btnCol.addEventListener('mousedown', e => e.stopPropagation());
+    btnCol.addEventListener('click', e => { e.stopPropagation(); toggleCollapse(node.id); });
+  }
+
+  const delBtn = el.querySelector('.btn-delete');
+  delBtn.addEventListener('mousedown', e => e.stopPropagation());
+  delBtn.addEventListener('click', e => { e.stopPropagation(); removeNode(node.id); });
+
+  // Drag
+  el.addEventListener('mousedown', e => {
+    if (e.target.tagName==='TEXTAREA'||e.target.tagName==='INPUT') return;
+    if (e.target.closest('.btn-delete,.btn-connect,.island-footer,.type-badge')) return;
+    hideStrip();
+    e.preventDefault(); e.stopPropagation();
+    pushUndo();
+    const pos = toCanvas(e.clientX,e.clientY);
+    drag = { nodeId:node.id, ox:pos.x-node.x, oy:pos.y-node.y };
+    el.classList.add('is-dragging');
+    if (!e.altKey && node.type!=='draft') {
+      snapGuide.style.top = snapY(node.id)+'px';
+      snapGuide.classList.add('visible');
+    }
+  });
+
+  // Hover strip
+  let hoverTimer=null, inNode=false;
+  el.addEventListener('mouseenter', () => {
+    inNode=true;
+    clearTimeout(stripHideTimer); // cancel any pending hide
+    if (drag||pan||connectionSrc) return;
+    if (VALID_CHILDREN[node.type]?.length===0) return;
+    clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => { if (inNode) showStripFor(node); }, 180);
+  });
+  el.addEventListener('mouseleave', () => {
+    inNode=false; clearTimeout(hoverTimer);
+    stripHideTimer = setTimeout(() => { if (!hoverStrip.matches(':hover')) hideStrip(); }, 150);
+  });
+
+  // Connection mode click
+  el.addEventListener('click', e => {
+    if (!connectionSrc) return;
+    if (node.id===connectionSrc) return;
+    if (!el.classList.contains('connectable')) return;
+    e.stopPropagation();
+    pendingConnTarget = node.id;
+    const srcNode = nodes.find(n => n.id === connectionSrc);
+    if (srcNode && srcNode.type !== 'draft') {
+      // Node already has a real type — connect directly, no picker, keep its position
+      upgradeIsland(connectionSrc, srcNode.type, node.id, true);
+      exitConnectionMode();
+    } else {
+      showConnPicker(node.id, e.clientX, e.clientY);
+    }
+  });
+
+  canvas.appendChild(el);
+  if (node.width) el.style.width = node.width + 'px';
+  autoResize(ta);
+  elOf[node.id] = el;
+  return el;
+}
+
+// ── Remove node + descendants ──────────────────────────────────────────
+function removeNode(id) {
+  pushUndo();
+  if (connectionSrc===id) exitConnectionMode();
+  const dead=[];
+  function collect(nid) { dead.push(nid); nodes.filter(n=>n.parentId===nid).forEach(n=>collect(n.id)); }
+  collect(id);
+  dead.forEach(nid => removeFromCoGroup(nid));
+  dead.forEach(nid => { elOf[nid]?.remove(); delete elOf[nid]; });
+  nodes = nodes.filter(n=>!dead.includes(n.id));
+  drawConnectors();
+}
+
+// ── Hover strip (viewport-space) ───────────────────────────────────────
+function showStripFor(node) {
+  currentHoverNode = node;
+  const validTypes = VALID_CHILDREN[node.type] || [];
+  hoverStrip.innerHTML = '';
+  validTypes.forEach(type => {
+    const btn = document.createElement('button');
+    btn.className  = 'strip-btn';
+    btn.dataset.type  = type;
+    btn.dataset.label = TYPE_LABEL[type];
+    btn.title = TYPE_LABEL[type];
+    btn.addEventListener('mousedown', e => { e.stopPropagation(); e.preventDefault(); });
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      addNodeOfType(type, node.id);
+      hideStrip();
+    });
+    hoverStrip.appendChild(btn);
+  });
+  positionStrip(node);
+  hoverStrip.classList.add('visible');
+}
+
+function positionStrip(node) {
+  const el = elOf[node.id]; if (!el) return;
+  const vp = toViewport(node.x + (el.offsetWidth||234)/2, node.y + (el.offsetHeight||80));
+  hoverStrip.style.left = vp.x+'px';
+  hoverStrip.style.top  = (vp.y+3)+'px';
+}
+
+function updateStripPosition() {
+  if (currentHoverNode && hoverStrip.classList.contains('visible')) {
+    positionStrip(currentHoverNode);
+  }
+}
+
+function hideStrip() {
+  hoverStrip.classList.remove('visible');
+  currentHoverNode = null;
+}
+
+hoverStrip.addEventListener('mouseenter', () => clearTimeout(stripHideTimer));
+hoverStrip.addEventListener('mouseleave', () => hideStrip());
+
+// ── Auto-arrange: push overlapping nodes apart at each Y level ────────
+function resolveOverlaps() {
+  const GAP = 22, GAP_CO = 4;
+  // Group non-draft nodes by Y position
+  const groups = {};
+  nodes.filter(n => n.type !== 'draft' && !isHiddenByCollapse(n.id)).forEach(n => {
+    if (!groups[n.y]) groups[n.y] = [];
+    groups[n.y].push(n);
+  });
+  let changed = false;
+  Object.values(groups).forEach(group => {
+    if (group.length < 2) return;
+    group.sort((a, b) => a.x - b.x);
+    for (let i = 1; i < group.length; i++) {
+      const prev = group[i-1], cur = group[i];
+      const inSameCG = prev.coGroupId && prev.coGroupId === cur.coGroupId;
+      const gap = inSameCG ? GAP_CO : GAP;
+      const minX = prev.x + (prev.width || 234) + gap;
+      if (cur.x < minX) { cur.x = minX; changed = true; }
+    }
+  });
+  if (!changed) return;
+  // Animate the repositioning
+  Object.values(elOf).forEach(el => el.classList.add('layout-animate'));
+  nodes.forEach(n => { if (elOf[n.id]) elOf[n.id].style.left = n.x + 'px'; });
+  setTimeout(() => Object.values(elOf).forEach(el => el.classList.remove('layout-animate')), 280);
+  drawConnectors();
+}
+
+// ── Add node of type under parent ──────────────────────────────────────
+function addNodeOfType(type, parentId, text='', source='') {
+  pushUndo();
+  const parent   = nodes.find(n=>n.id===parentId);
+  const depth    = nodeDepth(parentId)+1;
+  const y        = dynamicLevels[Math.min(depth, dynamicLevels.length-1)];
+  const siblings = nodes.filter(n=>n.parentId===parentId);
+  const x        = siblings.length ? Math.max(...siblings.map(n=>n.x))+260 : parent.x;
+  const newNode  = { id:`n${uidCounter++}`, type, parentId, text, source, x, y };
+  nodes.push(newNode);
+  // Auto-expand parent if collapsed so new child is visible
+  if (parent && parent.collapsed) { parent.collapsed = false; applyCollapsed(); }
+  const el = buildNode(newNode);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{ drawConnectors(); resolveOverlaps(); el.querySelector('.node-text')?.focus(); }));
+  return newNode;
+}
+
+// ── Island node ────────────────────────────────────────────────────────
+function addIslandNode() {
+  pushUndo();
+  const r = viewport.getBoundingClientRect();
+  const nodeW = 234, pad = 28;
+  // Top-right of the visible canvas area in canvas coordinates
+  let x = (r.width - tx) / sc - nodeW - pad;
+  let y = (48 - ty) / sc + pad; // 48px header
+  // Stack downward if another node is already near this spot
+  const clash = () => nodes.some(n => Math.abs(n.x - x) < nodeW && Math.abs(n.y - y) < 70);
+  while (clash()) y += 72;
+  const newNode = { id:`n${uidCounter++}`, type:'draft', parentId:null, text:'', source:'', x, y };
+  nodes.push(newNode);
+  buildNode(newNode);
+  drawConnectors();
+}
+
+// ── Connection mode ────────────────────────────────────────────────────
+function toggleConnectionMode(srcId) {
+  if (connectionSrc===srcId) { exitConnectionMode(); return; }
+  if (connectionSrc) exitConnectionMode();
+  connectionSrc = srcId;
+  viewport.classList.add('connection-mode');
+  connHint.classList.add('visible');
+  // Highlight valid parents (exclude islands, evidence, and the source node itself)
+  nodes.forEach(n => {
+    if (n.id===srcId||n.type==='evidence') return;
+    if (n.parentId===null && n.type!=='contention') return; // skip other islands
+    elOf[n.id]?.classList.add('connectable');
+  });
+  elOf[srcId]?.querySelector('.btn-connect')?.classList.add('active');
+}
+
+function exitConnectionMode() {
+  if (!connectionSrc) return;
+  nodes.forEach(n => elOf[n.id]?.classList.remove('connectable'));
+  elOf[connectionSrc]?.querySelector('.btn-connect')?.classList.remove('active');
+  viewport.classList.remove('connection-mode');
+  connHint.classList.remove('visible');
+  hideConnPicker();
+  connectionSrc = null;
+  pendingConnTarget = null;
+}
+
+// ── Connection type picker ─────────────────────────────────────────────
+function showConnPicker(parentId, clientX, clientY) {
+  const parent = nodes.find(n=>n.id===parentId);
+  const validTypes = VALID_CHILDREN[parent.type]||[];
+
+  // Remove old buttons (keep label)
+  connPicker.querySelectorAll('.conn-type-btn').forEach(b=>b.remove());
+
+  validTypes.forEach(type => {
+    const btn = document.createElement('button');
+    btn.className = 'conn-type-btn';
+    btn.dataset.type = type;
+    btn.textContent = TYPE_LABEL[type];
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      upgradeIsland(connectionSrc, type, parentId);
+      exitConnectionMode();
+    });
+    connPicker.appendChild(btn);
+  });
+
+  // Position: keep within viewport bounds
+  const vw=window.innerWidth, vh=window.innerHeight;
+  const pw=140, ph=valids(validTypes)*38+30;
+  const left = Math.min(clientX+8, vw-pw-8);
+  const top  = Math.min(clientY-10, vh-ph-8);
+  connPicker.style.left = left+'px';
+  connPicker.style.top  = top+'px';
+  connPicker.classList.add('visible');
+}
+function valids(arr) { return arr.length; }
+
+function hideConnPicker() { connPicker.classList.remove('visible'); }
+
+document.addEventListener('mousedown', e => {
+  if (!connPicker.contains(e.target)) hideConnPicker();
+});
+
+// ── Upgrade island node to real node ──────────────────────────────────
+function upgradeIsland(id, type, parentId, keepPosition = false) {
+  pushUndo();
+  const node = nodes.find(n=>n.id===id); if (!node) return;
+  const parent = nodes.find(n=>n.id===parentId); if (!parent) return;
+
+  elOf[id]?.remove(); delete elOf[id];
+
+  node.type     = type;
+  node.parentId = parentId;
+  // Only snap Y for blank drafts; keep position for detached nodes placed by the user
+  if (!keepPosition) {
+    const depth = nodeDepth(id);
+    node.y = SNAP_LEVELS[Math.min(depth, SNAP_LEVELS.length-1)];
+  }
+
+  buildNode(node);
+  requestAnimationFrame(()=>requestAnimationFrame(drawConnectors));
+}
+
+// ── Add-node panel ─────────────────────────────────────────────────────
+let selectedType = 'reason';
+const addPanel    = document.getElementById('add-panel');
+const typePillsEl = document.getElementById('type-pills');
+const parentSel   = document.getElementById('parent-select');
+const panelText   = document.getElementById('panel-text');
+const srcPanelRow = document.getElementById('source-panel-row');
+const panelSrc    = document.getElementById('panel-source');
+
+function openAddPanel() {
+  parentSel.innerHTML='';
+  const none=document.createElement('option'); none.value=''; none.textContent='— none (root) —';
+  parentSel.appendChild(none);
+  nodes.filter(n=>n.type!=='draft').forEach(n=>{
+    const opt=document.createElement('option');
+    opt.value=n.id; opt.textContent=`[${TYPE_LABEL[n.type]}] ${truncate(n.text||'(empty)')}`;
+    parentSel.appendChild(opt);
+  });
+  const con=nodes.find(n=>n.type==='contention');
+  if (con) parentSel.value=con.id;
+  panelText.value=''; panelSrc.value=''; autoResize(panelText);
+  addPanel.classList.add('is-open');
+  document.getElementById('btn-add-node').classList.add('is-open');
+  panelText.focus();
+}
+function closeAddPanel() {
+  addPanel.classList.remove('is-open');
+  document.getElementById('btn-add-node').classList.remove('is-open');
+}
+
+typePillsEl.addEventListener('click', e => {
+  const pill=e.target.closest('.type-pill'); if (!pill) return;
+  typePillsEl.querySelectorAll('.type-pill').forEach(p=>p.classList.remove('selected'));
+  pill.classList.add('selected'); selectedType=pill.dataset.type;
+  srcPanelRow.classList.toggle('visible', selectedType==='evidence');
+});
+document.getElementById('btn-add-node').addEventListener('click', e => {
+  e.stopPropagation();
+  addPanel.classList.contains('is-open') ? closeAddPanel() : openAddPanel();
+});
+document.getElementById('btn-add-cancel').addEventListener('click', closeAddPanel);
+panelText.addEventListener('input', ()=>autoResize(panelText));
+
+document.getElementById('btn-add-confirm').addEventListener('click', ()=>{
+  const parentId = parentSel.value||null;
+  let x, y;
+  if (parentId) {
+    const pos = choosePos(parentId); x=pos.x; y=pos.y;
+  } else {
+    const c = viewportCenter(); x=c.x; y=SNAP_LEVELS[0];
+  }
+  const newNode = { id:`n${uidCounter++}`, type:selectedType, parentId,
+    text:panelText.value.trim(), source:selectedType==='evidence'?panelSrc.value.trim():'', x, y };
+  nodes.push(newNode);
+  buildNode(newNode);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{ drawConnectors(); resolveOverlaps(); }));
+  closeAddPanel();
+});
+
+function choosePos(parentId) {
+  const parent=nodes.find(n=>n.id===parentId);
+  const depth=nodeDepth(parentId)+1;
+  const y=SNAP_LEVELS[Math.min(depth,SNAP_LEVELS.length-1)];
+  const siblings=nodes.filter(n=>n.parentId===parentId);
+  const x=siblings.length ? Math.max(...siblings.map(n=>n.x))+260 : parent.x;
+  return {x,y};
+}
+
+document.getElementById('btn-add-island').addEventListener('click', e=>{e.stopPropagation(); addIslandNode();});
+
+// Close panels on outside click
+document.addEventListener('mousedown', e=>{
+  if (!addPanel.contains(e.target)&&!document.getElementById('btn-add-node').contains(e.target)) closeAddPanel();
+  const lp=document.getElementById('load-panel');
+  if (!lp.contains(e.target)&&!document.getElementById('btn-load').contains(e.target)) closeLoadPanel();
+});
+document.addEventListener('keydown', e=>{
+  if (e.key==='Escape') { closeAddPanel(); closeLoadPanel(); exitConnectionMode(); }
+});
+
+// ── Export ─────────────────────────────────────────────────────────────
+function buildExportText() {
+  const lines = [];
+  const roots = nodes.filter(n=>!n.parentId&&n.type!=='draft')
+                     .sort((a,b)=>a.x-b.x);
+
+  function traverse(id, depth) {
+    const node = nodes.find(n=>n.id===id); if (!node||node.type==='draft') return;
+    const indent = depth===0 ? '' : '  '+'    '.repeat(depth-1);
+    if (depth===0) {
+      if (lines.length) lines.push('');
+      lines.push(node.text);
+    } else {
+      const prefixes = { reason:'• ', objection:'Counter: ', rebuttal:'Rebuttal: ', evidence:'Evidence: ' };
+      const prefix = prefixes[node.type]||'';
+      const content = node.type==='evidence' ? (node.source||node.text) : node.text;
+      lines.push(indent+prefix+content);
+    }
+    const children = nodes.filter(n=>n.parentId===id&&n.type!=='draft').sort((a,b)=>a.x-b.x);
+    children.forEach(c=>traverse(c.id, depth+1));
+    if (node.type==='reason') lines.push('');
+  }
+
+  roots.forEach(r=>traverse(r.id,0));
+  return lines.join('\n').trimEnd();
+}
+
+const exportModal    = document.getElementById('export-modal');
+const exportBackdrop = document.getElementById('export-backdrop');
+const exportPre      = document.getElementById('export-pre');
+
+document.getElementById('btn-export').addEventListener('click', ()=>{
+  exportPre.textContent = buildExportText();
+  exportModal.classList.add('visible');
+  exportBackdrop.classList.add('visible');
+});
+function closeExport() { exportModal.classList.remove('visible'); exportBackdrop.classList.remove('visible'); }
+document.getElementById('btn-export-close').addEventListener('click', closeExport);
+exportBackdrop.addEventListener('click', closeExport);
+
+document.getElementById('btn-export-copy').addEventListener('click', ()=>{
+  navigator.clipboard.writeText(exportPre.textContent).then(()=>showToast('Copied to clipboard'));
+});
+
+function downloadFile(text, filename) {
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([text],{type:'text/plain'}));
+  a.download=filename; a.click(); URL.revokeObjectURL(a.href);
+}
+document.getElementById('btn-export-dl-txt').addEventListener('click',()=>downloadFile(exportPre.textContent,'argument-map.txt'));
+document.getElementById('btn-export-dl-md').addEventListener('click', ()=>downloadFile(exportPre.textContent,'argument-map.md'));
+
+// ── Collapse ───────────────────────────────────────────────────────────
+function isHiddenByCollapse(nodeId) {
+  const node = nodes.find(n => n.id === nodeId);
+  if (!node || !node.parentId) return false;
+  const parent = nodes.find(n => n.id === node.parentId);
+  if (!parent) return false;
+  return parent.collapsed || isHiddenByCollapse(node.parentId);
+}
+
+function applyCollapsed() {
+  nodes.forEach(n => {
+    const el = elOf[n.id]; if (!el) return;
+    const hidden = isHiddenByCollapse(n.id);
+    el.style.display = hidden ? 'none' : '';
+    if (n.collapsed) { el.dataset.collapsed = 'true'; }
+    else             { delete el.dataset.collapsed; }
+    const btn = el.querySelector('.btn-collapse');
+    if (btn) btn.textContent = n.collapsed ? '▸' : '▾';
+  });
+}
+
+function toggleCollapse(nodeId) {
+  const node = nodes.find(n => n.id === nodeId); if (!node) return;
+  const children = nodes.filter(n => n.parentId === nodeId);
+  if (!children.length) return; // nothing to collapse
+  node.collapsed = !node.collapsed;
+  applyCollapsed();
+  drawConnectors();
+}
+
+// ── Auto-layout ("Tidy") ───────────────────────────────────────────────
+function autoLayout() {
+  pushUndo();
+  coGroups = []; nodes.forEach(n => { if (n.coGroupId !== undefined) n.coGroupId = null; });
+  const defaultW = 234, gap = 30;
+  const root = nodes.find(n => n.type === 'contention');
+  if (!root) { showToast('No contention node found'); return; }
+
+  computeDynamicLevels();
+
+  const cache = {};
+  function subtreeW(id) {
+    if (cache[id] !== undefined) return cache[id];
+    const n = nodes.find(nd => nd.id === id);
+    const myW = (n && n.width) || defaultW;
+    const ch = nodes.filter(c => c.parentId === id);
+    if (!ch.length) return (cache[id] = myW);
+    const total = ch.reduce((s, c) => s + subtreeW(c.id), 0) + (ch.length - 1) * gap;
+    return (cache[id] = Math.max(myW, total));
+  }
+
+  function assign(id, centerX, depth) {
+    const node = nodes.find(n => n.id === id); if (!node) return;
+    const w = node.width || defaultW;
+    node.x = centerX - w / 2;
+    node.y = dynamicLevels[Math.min(depth, dynamicLevels.length - 1)];
+    const ch = nodes.filter(n => n.parentId === id);
+    if (!ch.length) return;
+    const totalW = ch.reduce((s, c) => s + subtreeW(c.id), 0) + (ch.length - 1) * gap;
+    let x = centerX - totalW / 2;
+    ch.forEach(c => { const cw = subtreeW(c.id); assign(c.id, x + cw / 2, depth + 1); x += cw + gap; });
+  }
+
+  const r = viewport.getBoundingClientRect();
+  assign(root.id, (r.width / 2 - tx) / sc, 0);
+
+  Object.values(elOf).forEach(el => el.classList.add('layout-animate'));
+  nodes.forEach(n => { const el = elOf[n.id]; if (el) { el.style.left = n.x+'px'; el.style.top = n.y+'px'; } });
+  setTimeout(() => { Object.values(elOf).forEach(el => el.classList.remove('layout-animate')); drawConnectors(); }, 320);
+}
+
+// ── Zoom to fit ────────────────────────────────────────────────────────
+function zoomToFit() {
+  const pad = 60;
+  const r = viewport.getBoundingClientRect();
+  let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+  nodes.forEach(n => {
+    const el = elOf[n.id]; if (!el || el.style.display==='none') return;
+    const w = el.offsetWidth||234, h = el.offsetHeight||80;
+    minX=Math.min(minX,n.x); maxX=Math.max(maxX,n.x+w);
+    minY=Math.min(minY,n.y); maxY=Math.max(maxY,n.y+h);
+  });
+  if (!isFinite(minX)) return;
+  const cw = maxX-minX+pad*2, ch = maxY-minY+pad*2;
+  sc = Math.min(Math.min(r.width/cw, r.height/ch), 1.5);
+  sc = Math.max(sc, 0.15);
+  tx = r.width/2  - (minX-pad + cw/2) * sc;
+  ty = r.height/2 - (minY-pad + ch/2) * sc;
+  applyTransform();
+  drawConnectors();
+}
+
+// ── Print ──────────────────────────────────────────────────────────────
+function printMap() {
+  const saveTx=tx, saveTy=ty, saveSc=sc;
+  zoomToFit();
+  setTimeout(() => {
+    window.print();
+    tx=saveTx; ty=saveTy; sc=saveSc;
+    applyTransform();
+    drawConnectors();
+  }, 120);
+}
+
+// ── Minimap ────────────────────────────────────────────────────────────
+const minimapEl = document.getElementById('minimap');
+const mmCtx = minimapEl.getContext('2d');
+const MM_W = 160, MM_H = 110, MM_PAD = 8;
+const TYPE_FILL = { contention:'#5c6bc0', reason:'#43a047', objection:'#ef5350', rebuttal:'#fb8c00', evidence:'#1e88e5', draft:'#c8c4bc' };
+let mmScale=1, mmOffX=0, mmOffY=0; // updated by updateMinimap, used by click handler
+
+function updateMinimap() {
+  mmCtx.clearRect(0, 0, MM_W, MM_H);
+  const visible = nodes.filter(n => { const el=elOf[n.id]; return el && el.style.display!=='none'; });
+  if (!visible.length) return;
+
+  let minX=Infinity, maxX=-Infinity, minY=Infinity, maxY=-Infinity;
+  visible.forEach(n => {
+    const el=elOf[n.id], w=el.offsetWidth||234, h=el.offsetHeight||80;
+    minX=Math.min(minX,n.x); maxX=Math.max(maxX,n.x+w);
+    minY=Math.min(minY,n.y); maxY=Math.max(maxY,n.y+h);
+  });
+
+  const cw=maxX-minX||1, ch=maxY-minY||1;
+  mmScale = Math.min((MM_W-MM_PAD*2)/cw, (MM_H-MM_PAD*2)/ch);
+  mmOffX  = MM_PAD + ((MM_W-MM_PAD*2) - cw*mmScale) / 2 - minX*mmScale;
+  mmOffY  = MM_PAD + ((MM_H-MM_PAD*2) - ch*mmScale) / 2 - minY*mmScale;
+
+  // Connectors (individual nodes, skip co-grouped)
+  mmCtx.strokeStyle = '#cdc9c1'; mmCtx.lineWidth = 1;
+  nodes.forEach(n => {
+    if (!n.parentId || isHiddenByCollapse(n.id)) return;
+    if (n.coGroupId) return; // drawn via co-group loop below
+    const parent=nodes.find(p=>p.id===n.parentId);
+    if (!parent) return;
+    const cEl=elOf[n.id], pEl=elOf[parent.id];
+    if (!cEl||!pEl) return;
+    mmCtx.beginPath();
+    mmCtx.moveTo(n.x*mmScale+mmOffX+(cEl.offsetWidth||234)*mmScale/2, n.y*mmScale+mmOffY);
+    mmCtx.lineTo(parent.x*mmScale+mmOffX+(pEl.offsetWidth||234)*mmScale/2, (parent.y+(pEl.offsetHeight||80))*mmScale+mmOffY);
+    mmCtx.stroke();
+  });
+
+  // Co-group bars on minimap
+  coGroups.forEach(cg => {
+    const gn = cg.nodeIds.map(id=>nodes.find(n=>n.id===id)).filter(Boolean);
+    if (gn.length < 2) return;
+    if (gn.some(n=>!elOf[n.id]||isHiddenByCollapse(n.id))) return;
+    const par = nodes.find(n=>n.id===gn[0].parentId); if(!par) return;
+    const pEl = elOf[par.id]; if(!pEl) return;
+    const W=234; gn.sort((a,b)=>a.x-b.x);
+    const barY=Math.min(...gn.map(n=>n.y))-16;
+    const lCX=gn[0].x+W/2, rCX=gn[gn.length-1].x+W/2, midX=(lCX+rCX)/2;
+    mmCtx.beginPath(); mmCtx.moveTo(lCX*mmScale+mmOffX,barY*mmScale+mmOffY); mmCtx.lineTo(rCX*mmScale+mmOffX,barY*mmScale+mmOffY); mmCtx.stroke();
+    gn.forEach(n=>{ mmCtx.beginPath(); mmCtx.moveTo((n.x+W/2)*mmScale+mmOffX,barY*mmScale+mmOffY); mmCtx.lineTo((n.x+W/2)*mmScale+mmOffX,n.y*mmScale+mmOffY); mmCtx.stroke(); });
+    mmCtx.beginPath(); mmCtx.moveTo(midX*mmScale+mmOffX,barY*mmScale+mmOffY); mmCtx.lineTo((par.x+(pEl.offsetWidth||234)/2)*mmScale+mmOffX,(par.y+(pEl.offsetHeight||80))*mmScale+mmOffY); mmCtx.stroke();
+  });
+
+  // Nodes
+  visible.forEach(n => {
+    const el=elOf[n.id], w=(el.offsetWidth||234)*mmScale, h=(el.offsetHeight||80)*mmScale;
+    const x=n.x*mmScale+mmOffX, y=n.y*mmScale+mmOffY;
+    mmCtx.fillStyle='#fff'; mmCtx.fillRect(x,y,w,h);
+    mmCtx.strokeStyle=TYPE_FILL[n.type]||'#aaa'; mmCtx.lineWidth=1.5; mmCtx.strokeRect(x,y,w,h);
+  });
+
+  // Viewport rect
+  const vr = viewport.getBoundingClientRect();
+  const vl=(-tx/sc)*mmScale+mmOffX, vt=(-ty/sc)*mmScale+mmOffY;
+  const vw=(vr.width/sc)*mmScale, vh=(vr.height/sc)*mmScale;
+  mmCtx.strokeStyle='rgba(90,130,190,.65)'; mmCtx.lineWidth=1.5;
+  mmCtx.setLineDash([3,2]); mmCtx.strokeRect(vl,vt,vw,vh); mmCtx.setLineDash([]);
+}
+
+minimapEl.addEventListener('click', e => {
+  const rect = minimapEl.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  // Convert minimap click to canvas coords, then pan to centre on that point
+  const cx = (mx - mmOffX) / mmScale;
+  const cy = (my - mmOffY) / mmScale;
+  const r  = viewport.getBoundingClientRect();
+  tx = r.width/2  - cx * sc;
+  ty = r.height/2 - cy * sc;
+  applyTransform();
+});
+
+// Buttons
+document.getElementById('btn-tidy').addEventListener('click', autoLayout);
+document.getElementById('btn-print').addEventListener('click', printMap);
+document.getElementById('btn-zoom-fit').addEventListener('click', zoomToFit);
+
+// ── Detach button ─────────────────────────────────────────────────────
+const detachBtn = document.getElementById('detach-btn');
+let detachHideTimer = null;
+let detachTargetId  = null;
+
+function showDetachBtn(childId, mxCanvas, myCanvas) {
+  clearTimeout(detachHideTimer);
+  detachTargetId = childId;
+  const vp = toViewport(mxCanvas, myCanvas);
+  detachBtn.style.left = vp.x + 'px';
+  detachBtn.style.top  = vp.y + 'px';
+  detachBtn.classList.add('visible');
+}
+
+function scheduleHideDetachBtn() {
+  detachHideTimer = setTimeout(() => {
+    detachBtn.classList.remove('visible');
+    detachTargetId = null;
+  }, 160);
+}
+
+function hideDetachBtn() {
+  clearTimeout(detachHideTimer);
+  detachBtn.classList.remove('visible');
+  detachTargetId = null;
+}
+
+detachBtn.addEventListener('mouseenter', () => clearTimeout(detachHideTimer));
+detachBtn.addEventListener('mouseleave', scheduleHideDetachBtn);
+detachBtn.addEventListener('click', () => {
+  if (!detachTargetId) return;
+  pushUndo();
+  const node = nodes.find(n => n.id === detachTargetId);
+  if (!node) return;
+  if (node.coGroupId) removeFromCoGroup(node.id);
+  node.parentId = null;
+  // Rebuild node element so it gains island styling and Connect → button
+  elOf[node.id]?.remove(); delete elOf[node.id];
+  buildNode(node);
+  hideDetachBtn();
+  drawConnectors();
+});
+
+// ── Type picker ────────────────────────────────────────────────────────
+const typePicker = document.getElementById('type-picker');
+let typePickerTarget = null;
+const ALL_TYPES = ['reason','objection','rebuttal','evidence'];
+
+function showTypePicker(nodeId, clientX, clientY) {
+  const node = nodes.find(n => n.id === nodeId);
+  if (!node) return;
+  typePickerTarget = nodeId;
+  typePicker.querySelectorAll('.type-picker-btn').forEach(b => b.remove());
+  ALL_TYPES.filter(t => t !== node.type).forEach(type => {
+    const btn = document.createElement('button');
+    btn.className = 'type-picker-btn';
+    btn.textContent = TYPE_LABEL[type];
+    btn.style.borderLeft = `3px solid var(--c-${type})`;
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      pushUndo();
+      node.type = type;
+      elOf[nodeId]?.remove(); delete elOf[nodeId];
+      buildNode(node);
+      drawConnectors();
+      hideTypePicker();
+    });
+    typePicker.appendChild(btn);
+  });
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const estH = ALL_TYPES.length * 30 + 30;
+  typePicker.style.left = Math.min(clientX, vw - 130) + 'px';
+  typePicker.style.top  = Math.min(clientY, vh - estH) + 'px';
+  typePicker.classList.add('visible');
+}
+
+function hideTypePicker() {
+  typePicker.classList.remove('visible');
+  typePickerTarget = null;
+}
+
+document.addEventListener('mousedown', e => {
+  if (!typePicker.contains(e.target)) hideTypePicker();
+});
+
+// ── Undo button + keyboard shortcut ───────────────────────────────────
+document.getElementById('btn-undo').addEventListener('click', undo);
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
+});
+
+// ── Argument check ────────────────────────────────────────────────────
+function runCheck() {
+  const childrenOf = id => nodes.filter(n => n.parentId === id);
+  const contention = nodes.find(n => n.type === 'contention');
+  const issues = [];
+  for (const n of nodes) {
+    if (['draft','contention','evidence'].includes(n.type)) continue;
+    const ch = childrenOf(n.id);
+    if (!ch.some(c => c.type === 'evidence'))
+      issues.push({ nodeType:n.type, text:n.text, issue:'no-evidence', msg:'No supporting Evidence' });
+    if (n.type === 'objection' && !ch.some(c => c.type === 'rebuttal'))
+      issues.push({ nodeType:n.type, text:n.text, issue:'no-rebuttal', msg:'No Rebuttal' });
+  }
+  const topReasons = contention
+    ? childrenOf(contention.id).filter(n => n.type === 'reason') : [];
+  return { issues, contention, topReasons };
+}
+
+function openCheckModal() {
+  const { issues, contention, topReasons } = runCheck();
+  const issuesEl  = document.getElementById('check-issues');
+  const summaryEl = document.getElementById('check-summary');
+
+  issuesEl.innerHTML = '';
+  if (issues.length === 0) {
+    issuesEl.innerHTML = '<div class="check-ok">No issues found.</div>';
+  } else {
+    issues.forEach(iss => {
+      const short = iss.text.length > 58 ? iss.text.slice(0,58)+'…' : iss.text;
+      const div = document.createElement('div');
+      div.className = 'check-issue';
+      div.innerHTML =
+        `<span class="check-issue-badge" style="background:var(--badge-${iss.nodeType}-bg);color:var(--badge-${iss.nodeType}-fg)">${TYPE_LABEL[iss.nodeType]}</span>` +
+        `<span class="check-issue-text">${escHtml(iss.msg)}: <em>"${escHtml(short)}"</em></span>`;
+      issuesEl.appendChild(div);
+    });
+  }
+
+  if (contention && topReasons.length) {
+    const ct = contention.text.replace(/[.?!]\s*$/, '');
+    const rl = topReasons.map(r => `<em>${escHtml(r.text.replace(/[.?!]\s*$/,''))}</em>`).join('; ');
+    summaryEl.innerHTML =
+      `If you assume the following are true, are you convinced of the contention that "<strong>${escHtml(ct)}</strong>"?<br><br>${rl}.`;
+    summaryEl.style.display = '';
+  } else {
+    summaryEl.style.display = 'none';
+  }
+
+  document.getElementById('check-modal').classList.add('visible');
+  document.getElementById('check-backdrop').classList.add('visible');
+}
+
+const checkBackdrop = document.getElementById('check-backdrop');
+document.getElementById('btn-check').addEventListener('click', openCheckModal);
+document.getElementById('btn-close-check').addEventListener('click', () => {
+  document.getElementById('check-modal').classList.remove('visible');
+  checkBackdrop.classList.remove('visible');
+});
+checkBackdrop.addEventListener('click', () => {
+  document.getElementById('check-modal').classList.remove('visible');
+  checkBackdrop.classList.remove('visible');
+});
+
+// ── Firebase save / load ───────────────────────────────────────────────
+function genCode() {
+  let c=''; for (let i=0;i<6;i++) c+=CODE_CHARS[Math.floor(Math.random()*CODE_CHARS.length)]; return c;
+}
+
+function openShareModal(code) {
+  const base = location.href.split('#')[0];
+  document.getElementById('share-link-edit').value = base + '#' + code;
+  document.getElementById('share-link-copy').value = base + '#' + code + 'copy';
+  document.getElementById('code-display').textContent = code;
+  document.getElementById('code-modal').classList.add('visible');
+  document.getElementById('code-backdrop').classList.add('visible');
+}
+
+async function saveMap() {
+  const btn = document.getElementById('btn-save');
+  btn.textContent='Saving…'; btn.disabled=true;
+  try {
+    let code = currentCode;
+    if (!code) {
+      for (let i=0; i<8; i++) {
+        const candidate = genCode();
+        const snap = await getDoc(doc(db,'argmap_maps',candidate));
+        if (!snap.exists()) { code=candidate; break; }
+      }
+      if (!code) throw new Error('Could not generate unique code');
+    }
+    const title   = document.getElementById('map-name').textContent.trim();
+    const savedAt = new Date().toISOString();
+    await setDoc(doc(db,'argmap_maps',code), {
+      nodes: nodes.map(n=>({...n})), coGroups, title, savedAt,
+    });
+    // Clear the pre-save draft slot before currentCode changes the key.
+    clearDraft();
+    currentCode=code;
+    localStorage.setItem('argmap_code',code);
+    location.hash='#'+code;
+    chipMode = 'Saved';
+    baselineState();
+    if (currentUser) {
+      await setDoc(doc(db,'users',currentUser.uid,'maps',code), { title, savedAt, code });
+      showToast('Saved to My Maps');
+    } else {
+      document.getElementById('code-modal-title').textContent='Map saved';
+      openShareModal(code);
+    }
+  } catch(err) {
+    console.error(err); showToast('Save failed: '+err.message, 3500);
+  } finally {
+    btn.textContent='Save'; btn.disabled=false;
+  }
+}
+
+function showShareModeModal(asCopy) {
+  document.getElementById('share-mode-title').textContent =
+    asCopy ? "You have your own copy" : "You're editing the original";
+  document.getElementById('share-mode-sub').textContent = asCopy
+    ? "Changes you make here won't affect the original map, and the person who shared it won't see them. Save to keep your own copy."
+    : "If you just refreshed your own map, carry on. If someone shared this link with you, your changes will update their map.";
+  document.getElementById('share-mode-modal').classList.add('visible');
+  document.getElementById('share-mode-backdrop').classList.add('visible');
+}
+
+async function loadMap(code, opts={}) {
+  const { asCopy=false, announceMode=false } = opts;
+  const upper = code.trim().toUpperCase(); if (!upper) return;
+  try {
+    const snap = await getDoc(doc(db,'argmap_maps',upper));
+    if (!snap.exists()) { showToast('No map found for that code.', 3000); return; }
+    const data = snap.data();
+    // Clear canvas and undo history
+    undoStack.length = 0;
+    nodes.forEach(n=>{ elOf[n.id]?.remove(); delete elOf[n.id]; });
+    nodes = (data.nodes||[]).map(n=>({...n}));
+    coGroups = (data.coGroups||[]).map(cg=>({...cg, nodeIds:[...cg.nodeIds]}));
+    cgCounter = coGroups.reduce((m,cg)=>Math.max(m,parseInt(cg.id.replace('cg',''))||0),0)+1;
+    if (data.title) document.getElementById('map-name').textContent = data.title + (asCopy ? ' (copy)' : '');
+    uidCounter = nodes.reduce((m,n)=>Math.max(m,parseInt(n.id.replace(/\D/g,''))||0),0)+1;
+    nodes.forEach(buildNode);
+    if (asCopy) {
+      // Not bound to the original's code, so the next Save forks a brand-new map.
+      currentCode = null;
+      chipMode = 'Copy';
+    } else {
+      currentCode = upper;
+      localStorage.setItem('argmap_code',upper);
+      location.hash='#'+upper;
+      chipMode = 'Loaded';
+    }
+    requestAnimationFrame(()=>requestAnimationFrame(drawConnectors));
+    // Read before baselining, which clears the stored draft.
+    const preDraft = asCopy ? null : readDraft(upper);
+    baselineState();
+    closeLoadPanel();
+    // A newer local draft for this map means the last session ended without saving.
+    const offerDraft = preDraft ? () => offerDraftRestore(preDraft, data.savedAt) : null;
+    if (announceMode) {
+      afterShareModeModal = offerDraft;
+      showShareModeModal(asCopy);
+    } else {
+      showToast('Map loaded ('+upper+')');
+      if (offerDraft) offerDraft();
+    }
+  } catch(err) {
+    console.error(err); showToast('Load failed: '+err.message, 3500);
+  }
+}
+
+document.getElementById('btn-save').addEventListener('click', saveMap);
+
+// Share: a map needs a code before it can be shared, so save first if needed.
+// For a copy-link map currentCode is null, so this forks it to its own code.
+async function shareMap() {
+  if (!currentCode) {
+    await saveMap();
+    if (!currentCode) return; // save failed; saveMap already reported why
+  }
+  document.getElementById('code-modal-title').textContent = 'Share this map';
+  openShareModal(currentCode);
+}
+document.getElementById('btn-share').addEventListener('click', shareMap);
+
+const codeBackdrop = document.getElementById('code-backdrop');
+document.getElementById('btn-copy-code').addEventListener('click',()=>{
+  const code = document.getElementById('code-display').textContent.trim();
+  navigator.clipboard.writeText(code||'').then(()=>showToast('Code copied'));
+});
+document.getElementById('btn-copy-edit-link').addEventListener('click',()=>{
+  const link = document.getElementById('share-link-edit').value;
+  navigator.clipboard.writeText(link).then(()=>showToast('Edit link copied'));
+});
+document.getElementById('btn-copy-copy-link').addEventListener('click',()=>{
+  const link = document.getElementById('share-link-copy').value;
+  navigator.clipboard.writeText(link).then(()=>showToast('Copy link copied'));
+});
+document.getElementById('btn-close-code').addEventListener('click',()=>{
+  document.getElementById('code-modal').classList.remove('visible');
+  codeBackdrop.classList.remove('visible');
+});
+codeBackdrop.addEventListener('click',()=>{
+  document.getElementById('code-modal').classList.remove('visible');
+  codeBackdrop.classList.remove('visible');
+});
+
+const shareModeBackdrop = document.getElementById('share-mode-backdrop');
+// Queued so a draft-restore prompt follows the share banner instead of stacking on it.
+let afterShareModeModal = null;
+function closeShareModeModal() {
+  document.getElementById('share-mode-modal').classList.remove('visible');
+  shareModeBackdrop.classList.remove('visible');
+  const next = afterShareModeModal;
+  afterShareModeModal = null;
+  if (next) next();
+}
+document.getElementById('btn-share-mode-ok').addEventListener('click', closeShareModeModal);
+shareModeBackdrop.addEventListener('click', closeShareModeModal);
+
+// Load panel
+const loadPanel = document.getElementById('load-panel');
+function closeLoadPanel() {
+  loadPanel.classList.remove('is-open');
+  document.getElementById('btn-load').classList.remove('is-open');
+}
+document.getElementById('btn-load').addEventListener('click', e=>{
+  e.stopPropagation();
+  loadPanel.classList.contains('is-open') ? closeLoadPanel() : (() => {
+    document.getElementById('code-input').value='';
+    loadPanel.classList.add('is-open');
+    document.getElementById('btn-load').classList.add('is-open');
+    document.getElementById('code-input').focus();
+  })();
+});
+document.getElementById('btn-load-cancel').addEventListener('click', closeLoadPanel);
+document.getElementById('btn-load-confirm').addEventListener('click', ()=>{
+  loadMap(document.getElementById('code-input').value);
+});
+document.getElementById('code-input').addEventListener('keydown', e=>{
+  if (e.key==='Enter') loadMap(e.target.value);
+});
+
+// ── Auth & My Maps ────────────────────────────────────────────────────
+let currentUser = null;
+
+const btnSignin   = document.getElementById('btn-signin');
+const btnSignout  = document.getElementById('btn-signout');
+const btnMyMaps   = document.getElementById('btn-my-maps');
+const userArea    = document.getElementById('user-area');
+const userAvatar  = document.getElementById('user-avatar');
+const userNameEl  = document.getElementById('user-display-name');
+const mmpPanel    = document.getElementById('my-maps-panel');
+const mmpList     = document.getElementById('mmp-list');
+
+btnSignin.addEventListener('click', () => signInWithPopup(auth, googleProvider).catch(console.error));
+btnSignout.addEventListener('click', () => signOut(auth));
+
+btnMyMaps.addEventListener('click', e => {
+  e.stopPropagation();
+  mmpPanel.classList.toggle('open');
+  if (mmpPanel.classList.contains('open')) loadMyMaps();
+});
+document.getElementById('btn-mmp-close').addEventListener('click', () => mmpPanel.classList.remove('open'));
+// Close panel on canvas click
+viewport.addEventListener('mousedown', () => mmpPanel.classList.remove('open'));
+
+onAuthStateChanged(auth, user => {
+  currentUser = user;
+  if (user) {
+    btnSignin.style.display  = 'none';
+    userArea.style.display   = 'flex';
+    btnMyMaps.style.display  = 'flex';
+    userAvatar.src           = user.photoURL || '';
+    userNameEl.textContent   = user.displayName || user.email || '';
+  } else {
+    btnSignin.style.display  = '';
+    userArea.style.display   = 'none';
+    btnMyMaps.style.display  = 'none';
+    mmpPanel.classList.remove('open');
+  }
+});
+
+async function loadMyMaps() {
+  if (!currentUser) return;
+  mmpList.innerHTML = '<div class="mmp-empty">Loading…</div>';
+  try {
+    const snap = await getDocs(collection(db, 'users', currentUser.uid, 'maps'));
+    if (snap.empty) {
+      mmpList.innerHTML = '<div class="mmp-empty">No saved maps yet.<br>Save a map to see it here.</div>';
+      return;
+    }
+    // Sort newest first
+    const items = snap.docs.map(d => ({code: d.id, ...d.data()}))
+                           .sort((a,b) => (b.savedAt||'').localeCompare(a.savedAt||''));
+    mmpList.innerHTML = '';
+    items.forEach(item => {
+      const row = document.createElement('div');
+      row.className = 'mmp-item';
+      const date = item.savedAt ? new Date(item.savedAt).toLocaleDateString() : '';
+      row.innerHTML = `
+        <div class="mmp-item-info">
+          <div class="mmp-item-title">${escHtml(item.title || 'Untitled')}</div>
+          <div class="mmp-item-meta">${date}</div>
+        </div>
+        <button class="mmp-item-share" title="Get shareable code">Share</button>
+        <button class="mmp-item-del" title="Delete">×</button>`;
+      row.querySelector('.mmp-item-info').addEventListener('click', () => {
+        loadMap(item.code);
+        mmpPanel.classList.remove('open');
+      });
+      row.querySelector('.mmp-item-share').addEventListener('click', e => {
+        e.stopPropagation();
+        document.getElementById('code-modal-title').textContent='Share this map';
+        openShareModal(item.code);
+      });
+      row.querySelector('.mmp-item-del').addEventListener('click', async e => {
+        e.stopPropagation();
+        if (!confirm('Delete "' + (item.title||'Untitled') + '"?')) return;
+        await deleteDoc(doc(db, 'users', currentUser.uid, 'maps', item.code));
+        row.remove();
+        if (!mmpList.children.length)
+          mmpList.innerHTML = '<div class="mmp-empty">No saved maps yet.<br>Save a map to see it here.</div>';
+      });
+      mmpList.appendChild(row);
+    });
+  } catch(err) {
+    console.error(err);
+    mmpList.innerHTML = '<div class="mmp-empty">Could not load maps.</div>';
+  }
+}
+
+// ── Co-premise helpers ────────────────────────────────────────────────
+function removeFromCoGroup(nodeId) {
+  const node = nodes.find(n => n.id === nodeId);
+  if (!node || !node.coGroupId) return;
+  const cgId = node.coGroupId;
+  const cg = coGroups.find(cg => cg.id === cgId);
+  if (!cg) { node.coGroupId = null; return; }
+  cg.nodeIds = cg.nodeIds.filter(id => id !== nodeId);
+  node.coGroupId = null;
+  if (cg.nodeIds.length < 2) {
+    cg.nodeIds.forEach(id => { const n=nodes.find(n=>n.id===id); if(n) n.coGroupId=null; });
+    coGroups = coGroups.filter(cg2 => cg2.id !== cgId);
+  }
+}
+
+function checkCoPremiseSnap(nodeId) {
+  const node = nodes.find(n => n.id === nodeId);
+  if (!node || !node.parentId) return;
+  const W = 234, SNAP_DIST = 20;
+
+  // Leave current co-group if dragged far enough from partner
+  if (node.coGroupId) {
+    const cg = coGroups.find(cg => cg.id === node.coGroupId);
+    if (cg) {
+      const allFar = cg.nodeIds.filter(id=>id!==nodeId).every(pid => {
+        const p = nodes.find(n=>n.id===pid); if(!p) return true;
+        return Math.abs((node.x+W/2)-(p.x+W/2)) >= W+SNAP_DIST;
+      });
+      if (allFar) removeFromCoGroup(nodeId);
+    }
+  }
+  if (node.coGroupId) return; // still grouped
+
+  // Snap to nearby un-grouped sibling at the same depth level
+  const siblings = nodes.filter(n =>
+    n.parentId===node.parentId && n.id!==nodeId &&
+    !isHiddenByCollapse(n.id) && n.y===node.y && !n.coGroupId
+  );
+  for (const sib of siblings) {
+    const dist = Math.abs((node.x+W/2)-(sib.x+W/2));
+    if (dist < W+SNAP_DIST) {
+      const leftId  = node.x <= sib.x ? nodeId : sib.id;
+      const rightId = node.x <= sib.x ? sib.id : nodeId;
+      snapIntoCoPremise(leftId, rightId);
+      return;
+    }
+  }
+}
+
+function snapIntoCoPremise(leftId, rightId) {
+  const leftNode  = nodes.find(n=>n.id===leftId);
+  const rightNode = nodes.find(n=>n.id===rightId);
+  if (!leftNode||!rightNode||leftNode.coGroupId||rightNode.coGroupId) return;
+  rightNode.x = leftNode.x + (leftNode.width || 234) + 4;
+  if (elOf[rightNode.id]) {
+    elOf[rightNode.id].classList.add('layout-animate');
+    elOf[rightNode.id].style.left = rightNode.x+'px';
+    setTimeout(()=>elOf[rightNode.id]?.classList.remove('layout-animate'),280);
+  }
+  const cgId = `cg${cgCounter++}`;
+  coGroups.push({ id:cgId, nodeIds:[leftId,rightId], operator:'AND' });
+  leftNode.coGroupId  = cgId;
+  rightNode.coGroupId = cgId;
+}
+
+// ── Canvas interactions ────────────────────────────────────────────────
+viewport.addEventListener('mousedown', e=>{
+  if (e.target===viewport||e.target===canvas||e.target===svgLayer) {
+    if (connectionSrc) { exitConnectionMode(); return; }
+    pan={cx0:e.clientX,cy0:e.clientY,tx0:tx,ty0:ty};
+    viewport.classList.add('is-panning');
+    e.preventDefault();
+  }
+});
+
+document.addEventListener('mousemove', e=>{
+  if (widthDrag) {
+    const node=nodes.find(n=>n.id===widthDrag.nodeId), el=elOf[widthDrag.nodeId];
+    if (node&&el) {
+      node.width = Math.max(120, Math.round(widthDrag.startW + (e.clientX - widthDrag.startX) / sc));
+      el.style.width = node.width + 'px';
+      const ta = el.querySelector('.node-text');
+      if (ta) autoResize(ta);
+      drawConnectors();
+    }
+    return;
+  }
+  if (drag) {
+    const node=nodes.find(n=>n.id===drag.nodeId), el=elOf[drag.nodeId];
+    if (!node||!el) return;
+    const pos=toCanvas(e.clientX,e.clientY);
+    node.x=pos.x-drag.ox; node.y=pos.y-drag.oy;
+    el.style.left=node.x+'px'; el.style.top=node.y+'px';
+    if (!e.altKey&&node.type!=='draft') snapGuide.style.top=snapY(drag.nodeId)+'px';
+    drawConnectors(); return;
+  }
+  if (pan) {
+    tx=pan.tx0+(e.clientX-pan.cx0); ty=pan.ty0+(e.clientY-pan.cy0);
+    applyTransform();
+  }
+});
+
+document.addEventListener('mouseup', e=>{
+  if (widthDrag) {
+    widthDrag = null;
+    computeDynamicLevels();
+    drawConnectors();
+    resolveOverlaps();
+    return;
+  }
+  if (drag) {
+    const nodeId=drag.nodeId;
+    const node=nodes.find(n=>n.id===nodeId), el=elOf[nodeId];
+    if (node&&el&&!e.altKey&&node.type!=='draft') {
+      node.y=snapY(nodeId); el.style.top=node.y+'px';
+    }
+    el?.classList.remove('is-dragging');
+    snapGuide.classList.remove('visible');
+    drag=null;
+    checkCoPremiseSnap(nodeId);
+    drawConnectors();
+    resolveOverlaps();
+  }
+  if (pan) { pan=null; viewport.classList.remove('is-panning'); }
+});
+
+// ── Zoom ───────────────────────────────────────────────────────────────
+viewport.addEventListener('wheel', e=>{
+  e.preventDefault(); hideStrip();
+  const f=e.deltaY<0?1.1:1/1.1, ns=Math.min(2.5,Math.max(.2,sc*f));
+  const r=viewport.getBoundingClientRect();
+  tx=(e.clientX-r.left)-((e.clientX-r.left)-tx)*(ns/sc);
+  ty=(e.clientY-r.top) -((e.clientY-r.top) -ty)*(ns/sc);
+  sc=ns; applyTransform();
+},{passive:false});
+
+document.getElementById('btn-zoom-in').addEventListener('click',()=>{sc=Math.min(2.5,sc*1.2);applyTransform();});
+document.getElementById('btn-zoom-out').addEventListener('click',()=>{sc=Math.max(.2,sc/1.2);applyTransform();});
+
+// ── Init ───────────────────────────────────────────────────────────────
+nodes.forEach(buildNode);
+applyTransform();
+requestAnimationFrame(()=>requestAnimationFrame(drawConnectors));
+window.addEventListener('resize', drawConnectors);
+
+// ── Analytics ────────────────────────────────────────────────────────
+function trackClick(name) {
+  setDoc(doc(db,'argmap_analytics','clicks'), {[name]:increment(1)}, {merge:true}).catch(()=>{});
+}
+function tracked(id, name) {
+  document.getElementById(id)?.addEventListener('click', () => trackClick(name));
+}
+tracked('btn-undo','undo');       tracked('btn-new','new');
+tracked('btn-add-node','add_node'); tracked('btn-add-island','add_draft');
+tracked('btn-import','import');   tracked('btn-export','export');
+tracked('btn-tidy','tidy');       tracked('btn-print','print');
+tracked('btn-check','check');     tracked('btn-save','save');
+tracked('btn-load','load');       tracked('btn-my-maps','my_maps');
+tracked('btn-share','share');
+tracked('btn-signin','signin');   tracked('btn-zoom-in','zoom_in');
+tracked('btn-zoom-out','zoom_out'); tracked('btn-zoom-fit','zoom_fit');
+tracked('btn-help','help');
+
+// ── Import modal ──────────────────────────────────────────────────────
+// The AI prompt that generates this JSON is deliberately not shown in the app,
+// so students do their own reasoning. It is kept in argmap/import-prompt.md.
+const importModal       = document.getElementById('import-modal');
+const importBackdrop    = document.getElementById('import-backdrop');
+const importJsonTa      = document.getElementById('import-json-ta');
+const btnImportConfirm  = document.getElementById('btn-import-confirm');
+
+function openImportModal() {
+  importJsonTa.value = '';
+  importModal.classList.add('visible');
+  importBackdrop.classList.add('visible');
+  importJsonTa.focus();
+}
+function closeImportModal() {
+  importModal.classList.remove('visible');
+  importBackdrop.classList.remove('visible');
+}
+
+document.getElementById('btn-import').addEventListener('click', () => {
+  document.getElementById('help-modal').classList.remove('visible');
+  document.getElementById('help-backdrop').classList.remove('visible');
+  openImportModal();
+});
+document.getElementById('btn-import-close').addEventListener('click', closeImportModal);
+importBackdrop.addEventListener('click', closeImportModal);
+
+btnImportConfirm.addEventListener('click', () => {
+  const txt = importJsonTa.value.trim();
+  if (!txt) { showToast('Paste JSON first', 2000); return; }
+  if (doImport(txt)) closeImportModal();
+});
+
+function doImport(jsonText) {
+  let data;
+  try { data = JSON.parse(jsonText); }
+  catch(e) { showToast('Invalid JSON — ' + e.message, 4000); return false; }
+
+  const VTYPES = new Set(['contention','reason','objection','rebuttal','evidence']);
+  const raw = (data.nodes||[]).filter(n => VTYPES.has(n.type));
+  if (!raw.length) { showToast('No valid nodes found in JSON', 4000); return false; }
+  if (!raw.some(n => n.type === 'contention')) { showToast('JSON must include a contention node', 4000); return false; }
+  if (!confirm('Replace the current map with the imported one?')) return false;
+
+  pushUndo();
+  nodes.forEach(n => { elOf[n.id]?.remove(); delete elOf[n.id]; });
+  coGroups = []; cgCounter = 1; uidCounter = 1;
+
+  const idMap = {};
+  nodes = raw.map(n => {
+    const newId = `n${uidCounter++}`;
+    idMap[String(n.id)] = newId;
+    return { id:newId, type:n.type, text:String(n.text||''), source:String(n.source||''),
+             parentId:null, x:400, y:50, collapsed:false };
+  });
+  raw.forEach((orig, i) => {
+    if (orig.parentId != null) {
+      const p = idMap[String(orig.parentId)];
+      if (p) nodes[i].parentId = p;
+    }
+  });
+
+  if (data.title) document.getElementById('map-name').textContent = data.title;
+  currentCode = null; location.hash = '';
+  chipMode = 'Draft';
+  undoStack.length = 0; // fresh start after import
+  // Imported content is real work, so treat it as unsaved from now.
+  savedSnapshot = '';
+  dirtySince = Date.now();
+  markDirty();
+
+  nodes.forEach(buildNode);
+
+  // Layout without a second undo push
+  requestAnimationFrame(() => {
+    computeDynamicLevels();
+    const NW=234, G=30;
+    const root=nodes.find(n=>n.type==='contention');
+    if (!root) { drawConnectors(); return; }
+    const cache={};
+    function sw(id){
+      if(cache[id]!==undefined)return cache[id];
+      const ch=nodes.filter(n=>n.parentId===id);
+      if(!ch.length)return(cache[id]=NW);
+      return(cache[id]=Math.max(NW,ch.reduce((s,c)=>s+sw(c.id),0)+(ch.length-1)*G));
+    }
+    function assign(id,cx,d){
+      const n=nodes.find(n=>n.id===id);if(!n)return;
+      n.x=cx-NW/2; n.y=dynamicLevels[Math.min(d,dynamicLevels.length-1)];
+      const ch=nodes.filter(n=>n.parentId===id);if(!ch.length)return;
+      const tot=ch.reduce((s,c)=>s+sw(c.id),0)+(ch.length-1)*G;
+      let x=cx-tot/2; ch.forEach(c=>{const cw=sw(c.id);assign(c.id,x+cw/2,d+1);x+=cw+G;});
+    }
+    const r=viewport.getBoundingClientRect();
+    assign(root.id,(r.width/2-tx)/sc,0);
+    Object.values(elOf).forEach(el=>el.classList.add('layout-animate'));
+    nodes.forEach(n=>{const el=elOf[n.id];if(el){el.style.left=n.x+'px';el.style.top=n.y+'px';}});
+    setTimeout(()=>{Object.values(elOf).forEach(el=>el.classList.remove('layout-animate'));drawConnectors();},320);
+  });
+  showToast(`Imported ${nodes.length} nodes`);
+  return true;
+}
+
+// ── Help modal ────────────────────────────────────────────────────────
+const helpModal    = document.getElementById('help-modal');
+const helpBackdrop = document.getElementById('help-backdrop');
+document.getElementById('btn-help').addEventListener('click', () => {
+  helpModal.classList.add('visible'); helpBackdrop.classList.add('visible');
+});
+document.getElementById('btn-help-close').addEventListener('click', () => {
+  helpModal.classList.remove('visible'); helpBackdrop.classList.remove('visible');
+});
+helpBackdrop.addEventListener('click', () => {
+  helpModal.classList.remove('visible'); helpBackdrop.classList.remove('visible');
+});
+
+// Auto-load from URL hash only — localStorage no longer silently restores the hash,
+// because deleting the hash and navigating to /argmap should give a clean slate.
+// A trailing "copy" (e.g. #ABC123copy) means: load this map's contents, but
+// don't bind to its code, so the first Save forks a brand-new, independent map.
+const rawHash = location.hash.replace('#','').trim();
+const hashIsCopy = /copy$/i.test(rawHash);
+const hashCode = (hashIsCopy ? rawHash.slice(0, -4) : rawHash).toUpperCase();
+
+// ── Draft recovery ────────────────────────────────────────────────────
+// Drafts are offered, never applied silently: navigating to /argmap with no
+// hash should still give a clean slate unless the student opts in.
+const restoreModal    = document.getElementById('restore-modal');
+const restoreBackdrop = document.getElementById('restore-backdrop');
+let pendingDraft = null;
+
+function closeRestore() {
+  restoreModal.classList.remove('visible');
+  restoreBackdrop.classList.remove('visible');
+  pendingDraft = null;
+}
+function agoText(ts) {
+  const mins = Math.floor((Date.now() - ts) / 60000);
+  if (mins < 1)  return 'less than a minute ago';
+  if (mins < 60) return mins + (mins === 1 ? ' minute ago' : ' minutes ago');
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24)  return hrs + (hrs === 1 ? ' hour ago' : ' hours ago');
+  const days = Math.round(hrs / 24);
+  return days + (days === 1 ? ' day ago' : ' days ago');
+}
+
+// Takes an already-read draft, because baselineState() clears the stored copy.
+function offerDraftRestore(draft, serverSavedAt) {
+  if (!draft || !draft.state) return;
+  // Nothing to offer if the draft matches what is already on screen.
+  if (draft.state === serialiseState()) { clearDraft(); return; }
+  // For a saved map, only offer a draft that is newer than the stored version.
+  if (serverSavedAt && draft.ts <= Date.parse(serverSavedAt)) return;
+  pendingDraft = draft;
+  document.getElementById('restore-sub').textContent =
+    'You have unsaved changes to "' + (draft.title || 'this map') + '" from ' +
+    agoText(draft.ts) + ', kept in this browser. Restore them, or discard and keep what is saved?';
+  restoreModal.classList.add('visible');
+  restoreBackdrop.classList.add('visible');
+}
+
+document.getElementById('btn-restore-ok').addEventListener('click', () => {
+  if (!pendingDraft) return closeRestore();
+  const { state, ts } = pendingDraft;
+  closeRestore();
+  try {
+    applyState(state);
+    savedSnapshot = '';            // restored work is by definition not saved yet
+    dirtySince = ts || Date.now();
+    markDirty();
+    showToast('Unsaved changes restored');
+  } catch (err) {
+    console.error(err); showToast('Could not restore draft', 3000);
+  }
+});
+document.getElementById('btn-restore-discard').addEventListener('click', () => {
+  clearDraft();
+  closeRestore();
+});
+
+purgeOldDrafts();
+
+if (hashCode.length===6) {
+  loadMap(hashCode, { asCopy: hashIsCopy, announceMode: true });
+} else {
+  // Fresh page: read the draft before baselining, since that clears it.
+  const pre = readDraft(null);
+  baselineState();
+  offerDraftRestore(pre, null);
+}
+</script>
+</body>
+</html>
